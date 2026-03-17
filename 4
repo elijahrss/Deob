@@ -1,0 +1,1219 @@
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+local Window = Rayfield:CreateWindow({
+    LoadingTitle = 'RE:XL By PizzaTheGoblin',
+    Name = 'RE:XL Rewrite by Kick',
+    LoadingSubtitle = 'Rewrite by Kick',
+    ConfigurationSaving = {
+        Enabled = true,
+        FolderName = 'REXL',
+        FileName = 'REXL_Client',
+    },
+    Theme = 'Bloom',
+    ToggleUIKeybind = 'K',
+})
+local Players = game:GetService('Players')
+local ReplicatedStorage = game:GetService('ReplicatedStorage')
+local RunService = game:GetService('RunService')
+local Workspace = game:GetService('Workspace')
+local LocalPlayer = Players.LocalPlayer
+local LiveFolder = Workspace:WaitForChild('Live')
+local RemoteEvents = ReplicatedStorage:WaitForChild('RemoteEvents')
+local BladeCombatRemote = RemoteEvents:WaitForChild('BladeCombatRemote')
+local ChangeQuestRemote = RemoteEvents:FindFirstChild('ChangeQuestRemote')
+local RedeemRemote = RemoteEvents:FindFirstChild('RedeemCode')
+local Modules = ReplicatedStorage:WaitForChild('Modules')
+local SignalRemote = Modules:WaitForChild('Signal'):WaitForChild('RemoteEvent')
+local Mouse = LocalPlayer:GetMouse()
+local PrestigeEvent = ReplicatedStorage:WaitForChild("ReiNew"):WaitForChild("PrestigeEvent")
+local ChangeNpcValueRemote = RemoteEvents:WaitForChild("ChangeNpcValueRemote")
+local DirectionOffsets = {
+    Above = Vector3.new(0, 1, 0),
+    Below = Vector3.new(0, -1, 0),
+    Behind = Vector3.new(0, 0, 1),
+}
+local function getCharacter()
+    return LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+end
+local function getHumanoidRoot(model)
+    return model and model:FindFirstChild('HumanoidRootPart')
+end
+local function getHumanoid(model)
+    return model and model:FindFirstChildOfClass('Humanoid')
+end
+local function getMouseHit()
+    return Mouse and Mouse.Hit or CFrame.new()
+end
+local function fireBladeCombat(useFinisher, position, cframe)
+    if BladeCombatRemote then
+        pcall(function()
+            BladeCombatRemote:FireServer(useFinisher, position, cframe)
+        end)
+    end
+end
+local function fireSignalAbility(name, ...)
+    if SignalRemote then
+        local args = {...}
+        pcall(function()
+            if #args > 0 then
+                SignalRemote:FireServer(name, table.unpack(args))
+            else
+                SignalRemote:FireServer(name)
+            end
+        end)
+    end
+end
+local function getClosestLiveEnemy()
+    local character = getCharacter()
+    local root = getHumanoidRoot(character)
+    if not root then
+        return
+    end
+    local closest, minDistance = nil, math.huge
+    for _, model in ipairs(LiveFolder:GetChildren()) do
+        if model:IsA('Model') and model ~= character then
+            local targetRoot = getHumanoidRoot(model)
+            local targetHumanoid = getHumanoid(model)
+            if targetRoot and targetHumanoid and targetHumanoid.Health > 0 then
+                local distance = (root.Position - targetRoot.Position).Magnitude
+                if distance < minDistance then
+                    minDistance = distance
+                    closest = model
+                end
+            end
+        end
+    end
+    return closest
+end
+local function selectTargetByName(name)
+    if name and name ~= '' and name ~= 'Any' then
+        for _, model in ipairs(LiveFolder:GetChildren()) do
+            if model:IsA('Model') and model ~= LocalPlayer.Character then
+                if model.Name:find(name) then
+                    local targetHumanoid = getHumanoid(model)
+                    if targetHumanoid and targetHumanoid.Health > 0 then
+                        return model
+                    end
+                end
+            end
+        end
+        return nil
+    end
+    return getClosestLiveEnemy()
+end
+local function teleportToTarget(target, offsetDirection)
+    local character = getCharacter()
+    local root = getHumanoidRoot(character)
+    local targetRoot = getHumanoidRoot(target)
+    if root and targetRoot then
+        root.CFrame = targetRoot.CFrame + offsetDirection
+    end
+end
+local function autoEquipWeapon()
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    local character = getCharacter()
+    if backpack and character then
+        for _, tool in ipairs(backpack:GetChildren()) do
+            if tool:IsA("Tool") then
+                local equipRemote = ReplicatedStorage.RemoteEvents:FindFirstChild("EquipWeaponRemote")
+                if equipRemote then
+                    pcall(function() equipRemote:FireServer(false, tool.Name) end)
+                end
+                tool.Parent = character
+                break
+            end
+        end
+    end
+end
+RunService.Stepped:Connect(function()
+    setsimulationradius(math.huge, math.huge)
+end)
+local FarmTab = Window:CreateTab('Farm', 4483362458)
+local FarmState = {
+    running = false,
+    autoKillEnabled = true,
+    clipEnabled = false,
+    distance = 5,
+    angle = 'Above',
+    autoQuest = false,
+    targetName = 'Legendary Saiyan',
+}
+local ClipConnection
+local function applyClip(enabled)
+    if ClipConnection then
+        ClipConnection:Disconnect()
+        ClipConnection = nil
+    end
+
+    if enabled then
+        ClipConnection = RunService.Stepped:Connect(function()
+            local character = getCharacter()
+            if character then
+                for _, part in ipairs(character:GetDescendants()) do
+                    if part:IsA("BasePart") and part.CanCollide then
+                        part.CanCollide = false
+                    end
+                end
+            end
+        end)
+    end
+end
+local function handleTarget(enemy)
+    local targetRoot = getHumanoidRoot(enemy)
+    local targetHumanoid = getHumanoid(enemy)
+    
+    if targetRoot and targetHumanoid and targetHumanoid.Health > 0 then
+        local offsetDirection = DirectionOffsets[FarmState.angle] or DirectionOffsets.Above
+        local offset = offsetDirection * FarmState.distance
+        teleportToTarget(enemy, offset)
+        autoEquipWeapon()
+        
+        local initialHealth = targetHumanoid.Health
+        local attacking = true
+
+        if FarmState.autoKillEnabled then
+            task.spawn(function()
+                while attacking and targetHumanoid and targetHumanoid.Health > 0 do
+                    fireBladeCombat(false, targetRoot.Position, targetRoot.CFrame)
+                    task.wait() 
+                end
+            end)
+
+            local startTime = tick()
+            repeat 
+                task.wait() 
+            until targetHumanoid.Health < initialHealth or not FarmState.running or (tick() - startTime > 5)
+
+            attacking = false 
+            if targetHumanoid and targetHumanoid.Health > 0 then
+                targetHumanoid.Health = 0
+                targetHumanoid:ChangeState(Enum.HumanoidStateType.Dead)
+            end
+        end
+    end
+end
+local function farmLoop()
+    task.spawn(function()
+        while FarmState.running do
+            local enemy = selectTargetByName(FarmState.targetName)
+            if enemy then
+                handleTarget(enemy)
+                applyClip(FarmState.clipEnabled)
+            end
+            task.wait(0.01)
+        end
+        if not FarmState.running then
+            applyClip(false)
+        end
+    end)
+end
+FarmTab:CreateToggle({
+    Name = 'Start Farm',
+    CurrentValue = false,
+    Callback = function(value)
+        FarmState.running = value
+        if value then
+            farmLoop()
+        end
+    end,
+})
+FarmTab:CreateToggle({
+    Name = 'Insta Kill',
+    CurrentValue = false,
+    Callback = function(value)
+        FarmState.autoKillEnabled = value 
+    end,
+})
+local AutoQuestState = {
+    active = false,
+}
+
+local function runAutoQuest()
+    local QuestName = "Defeat 25 Legendary Saiyan"
+    local RE = ReplicatedStorage:WaitForChild("RemoteEvents")
+    local ChangeQuestRemote = RE:FindFirstChild("ChangeQuestRemote")
+    local ChangeNpcRemote = RE:FindFirstChild("ChangeNpcValueRemote")
+    local QuestObject = ReplicatedStorage:WaitForChild("Quests"):FindFirstChild(QuestName)
+    local PlayerValues = LocalPlayer:WaitForChild("PlayerValues")
+    local QuestValues = LocalPlayer:WaitForChild("QuestValues")
+    
+    local function pegarQuest()
+        if not AutoQuestState.active then return end
+        pcall(function()
+            ChangeNpcRemote:FireServer(PlayerValues.DialogNpc, "Goten")
+            task.wait(0.1)
+            ChangeQuestRemote:FireServer(QuestObject)
+        end)
+    end
+
+    task.spawn(function()
+        while AutoQuestState.active do
+            local progress = QuestValues:FindFirstChild(QuestName .. "Progress")
+            
+            if not progress then
+                pegarQuest()
+            elseif progress.Value >= 25 then
+                pegarQuest()
+            end
+            
+            task.wait(0) 
+        end
+    end)
+end
+FarmTab:CreateToggle({
+    Name = 'Auto Quest',
+    CurrentValue = false,
+    Callback = function(value)
+        AutoQuestState.active = value
+        if value then
+            runAutoQuest()
+        end
+    end,
+})
+FarmTab:CreateToggle({
+    Name = 'Clip',
+    CurrentValue = false,
+    Callback = function(value)
+        FarmState.clipEnabled = value
+        if not value then
+            applyClip(false)
+        end
+    end,
+})
+FarmTab:CreateDropdown({
+    Name = 'Angle',
+    Options = {
+        [1] = 'Above',
+        [2] = 'Below',
+        [3] = 'Behind',
+    },
+    CurrentOption = {
+        [1] = 'Above',
+    },
+    Callback = function(selection)
+        FarmState.angle = selection[1] or 'Above'
+    end,
+})
+local enemyDropdown = FarmTab:CreateDropdown({
+    Name = 'Target',
+    Options = {'Any'},
+    CurrentOption = {
+        [1] = 'Any',
+    },
+    Callback = function(selection)
+        FarmState.targetName = selection[1] or 'Any'
+    end,
+})
+local lastOptions = {}
+
+local function updateEnemyDropdown()
+    local seenNames = {}
+    local options = {"Any"}
+    
+    for _, model in ipairs(LiveFolder:GetChildren()) do
+        if model:IsA("Model") and model ~= LocalPlayer.Character then
+            local rawName = model.Name
+            local cleanName = rawName:gsub("%d+", ""):gsub("%s+$", "") 
+
+            if cleanName ~= "" and not cleanName:lower():find("dummy") then
+                if not seenNames[cleanName] then
+                    table.insert(options, cleanName)
+                    seenNames[cleanName] = true
+                end
+            end
+        end
+    end
+    
+    table.sort(options)
+    
+    if enemyDropdown then
+        enemyDropdown:Refresh(options, true)
+    end
+end
+LiveFolder.ChildAdded:Connect(updateEnemyDropdown)
+LiveFolder.ChildRemoved:Connect(updateEnemyDropdown)
+updateEnemyDropdown()
+FarmTab:CreateSlider({
+    Name = 'Distance',
+    CurrentValue = 5,
+    Increment = 1,
+    Range = {
+        [1] = 0,
+        [2] = 25,
+    },
+    Callback = function(value)
+        FarmState.distance = value
+    end,
+})
+local buySettings = {
+    itemName = "Enter item name",
+    whitelist = "",
+    buyQuantity = 10,
+    autoBuy = false,
+    autoDelete = false,
+    bagCheck = false,
+    loopBuy = false,
+    loopUse = false
+}
+
+local BuyTab = Window:CreateTab("Buy", 4483362458)
+
+BuyTab:CreateSection("Auto Buy Configuration")
+
+BuyTab:CreateInput({
+    Name = "Item to Buy",
+    PlaceholderText = "Ex: Arrow, Random Accessory, Random Armor",
+    RemoveTextAfterFocusLost = false,
+    Callback = function(Text)
+        buySettings.itemName = Text
+    end,
+})
+
+BuyTab:CreateInput({
+    Name = "Whitelist",
+    PlaceholderText = "Ex: Right Face Bandage, Lucky Arrow, Requiem Arrow",
+    RemoveTextAfterFocusLost = false,
+    Callback = function(Text)
+        buySettings.whitelist = Text
+    end,
+})
+
+BuyTab:CreateDropdown({
+    Name = "Quantity",
+    Options = {"10","20","30","40","50"},
+    CurrentOption = {"10"},
+    MultipleOptions = false,
+    Callback = function(Option)
+        buySettings.buyQuantity = tonumber(Option[1])
+    end,
+})
+
+BuyTab:CreateToggle({
+    Name = "Enable AutoBuy Remote",
+    CurrentValue = false,
+    Callback = function(Value) buySettings.autoBuy = Value end,
+})
+
+BuyTab:CreateToggle({
+    Name = "Enable AutoDelete (Clear Inv)",
+    CurrentValue = false,
+    Callback = function(Value) buySettings.autoDelete = Value end,
+})
+
+BuyTab:CreateToggle({
+    Name = "Enable Bag Check (Overhead Text)",
+    CurrentValue = false,
+    Callback = function(Value) buySettings.bagCheck = Value end,
+})
+local function executeAutoBuyOnce()
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local BuyRemote = ReplicatedStorage:WaitForChild("RemoteEvents"):FindFirstChild("BuyItemRemote")
+    local ClearRemote = ReplicatedStorage:WaitForChild("RemoteEvents"):FindFirstChild("ClearInventoryRemote")
+    local storageRemote = ReplicatedStorage:WaitForChild("RemoteEvents"):FindFirstChild("StorageRemote")
+    
+    if not BuyRemote then return end
+
+    local whitelistItems = {}
+    for item in string.gmatch(buySettings.whitelist, '([^,]+)') do
+        table.insert(whitelistItems, item:match("^%s*(.-)%s*$"))
+    end
+
+    if buySettings.autoBuy then
+        for i = 1, buySettings.buyQuantity do
+            BuyRemote:FireServer(buySettings.itemName)
+            task.wait(0.05)
+        end
+    end
+
+    task.wait(0.3)
+
+    local player = game.Players.LocalPlayer
+    local backpack = player:FindFirstChild("Backpack")
+    if not backpack then return end
+    
+    local foundWhitelist = false
+
+    for _, item in ipairs(backpack:GetChildren()) do
+        local nameToCheck = item.Name
+        
+        if buySettings.bagCheck and item.Name == "Bag" then
+            pcall(function()
+                nameToCheck = item.BagPart.Overhead.ItemName.Text
+            end)
+        end
+
+        if table.find(whitelistItems, nameToCheck) then
+            foundWhitelist = true
+            local values = player:FindFirstChild("PlayerValues")
+            if storageRemote and values then
+                for i = 1, 50 do
+                    local slot = values:FindFirstChild("ItemStorage"..i)
+                    if slot and slot.Value == "" then
+                        storageRemote:FireServer(item, slot.Name)
+                        break
+                    end
+                end
+            end
+        end
+    end
+
+    if not foundWhitelist and buySettings.autoDelete and ClearRemote then
+        ClearRemote:FireServer()
+    end
+end
+
+BuyTab:CreateButton({
+    Name = "Execute AutoBuy Once",
+    Callback = function() executeAutoBuyOnce() end,
+})
+
+BuyTab:CreateToggle({
+    Name = "Loop AutoBuy",
+    CurrentValue = false,
+    Callback = function(Value)
+        buySettings.loopBuy = Value
+        task.spawn(function()
+            while buySettings.loopBuy do
+                executeAutoBuyOnce()
+                task.wait(1)
+            end
+        end)
+    end,
+})
+
+BuyTab:CreateSection("Fast Store Purchase")
+
+BuyTab:CreateButton({
+    Name = "Buy All Rare Items (Safe)",
+    Callback = function()
+        local BuyRemote = game:GetService("ReplicatedStorage").RemoteEvents:FindFirstChild("BuyItemRemote")
+        if not BuyRemote then return end
+
+        local items = {
+            "Arrow", "Rokakaka", "Newspaper", "Fire Stone", 
+            "Lightning Stone", "Random Armor", "Random Accessory", 
+            "Random Specialization", "Eyeball", "Heart", "Brain", "Random Mentor"
+        }
+
+        task.spawn(function()
+            for _, name in ipairs(items) do
+                BuyRemote:FireServer(name)
+                task.wait(0.1)
+            end
+        end)
+    end,
+})
+local DungeonTab = Window:CreateTab('Dungeon/InfT', 4483362458)
+local DungeonState = {
+    killNearby = false,
+    killDistance = 60,
+    autoInfTower = false,
+}
+local isTeleportingInf = false
+local PROMPT_DELAY = 0.1 
+local AFTER_INTERACT_DELAY = 0
+
+local function getTowerNPC()
+    local character = LocalPlayer.Character
+    local hrp = character and character:FindFirstChild("HumanoidRootPart")
+    if not hrp or not workspace:FindFirstChild("Floors") then return end
+
+    local best, dist = nil, math.huge
+    for _, floor in ipairs(workspace.Floors:GetChildren()) do
+        local npc = floor:FindFirstChild("NPC")
+        if npc then
+            local root = npc:FindFirstChild("HumanoidRootPart") or npc:FindFirstChildWhichIsA("BasePart")
+            if root then
+                local d = (root.Position - hrp.Position).Magnitude
+                if d < dist then
+                    dist = d
+                    best = npc
+                end
+            end
+        end
+    end
+    return best
+end
+local AutoDungeonState = {
+    active = false
+}
+local AutoDungeonState = {
+    active = false,
+    range = 500
+}
+local function runAutoDungeon()
+    task.spawn(function()
+        while AutoDungeonState.active do
+            local character = getCharacter()
+            local root = getHumanoidRoot(character)
+            
+            if root then
+                local targetList = {}
+                
+                for _, model in ipairs(LiveFolder:GetChildren()) do
+                    if model:IsA("Model") and model ~= character then
+                        local tRoot = getHumanoidRoot(model)
+                        local tHum = getHumanoid(model)
+                        
+                        if tRoot and tHum and tHum.Health > 0 then
+                            local dist = (root.Position - tRoot.Position).Magnitude
+                            if dist <= AutoDungeonState.range then
+                                table.insert(targetList, {model = model, root = tRoot, hum = tHum})
+                            end
+                        end
+                    end
+                end
+
+                table.sort(targetList, function(a, b)
+                    local distA = (root.Position - a.root.Position).Magnitude
+                    local distB = (root.Position - b.root.Position).Magnitude
+                    return distA < distB
+                end)
+
+                for _, data in ipairs(targetList) do
+                    if not AutoDungeonState.active then break end
+                    
+                    if data.hum and data.hum.Health > 0 then
+                        root.CFrame = data.root.CFrame
+                        
+                        repeat
+                            task.wait()
+                        until not data.hum or data.hum.Health <= 0 or not AutoDungeonState.active
+                        
+                        task.wait(0.1)
+                    end
+                end
+            end
+            task.wait(0.1)
+        end
+    end)
+end
+
+DungeonTab:CreateToggle({
+    Name = 'Auto-Dungeon (Near)',
+    CurrentValue = false,
+    Callback = function(value)
+        AutoDungeonState.active = value
+        if value then
+            runAutoDungeon()
+        end
+    end,
+})
+
+DungeonTab:CreateSlider({
+    Name = 'Search Range',
+    Range = {50, 2000},
+    Increment = 50,
+    CurrentValue = 500,
+    Callback = function(value)
+        AutoDungeonState.range = value
+    end,
+})
+local function runKillNearby()
+    task.spawn(function()
+        while DungeonState.killNearby do
+            local character = LocalPlayer.Character
+            local root = character and character:FindFirstChild("HumanoidRootPart")
+            
+            for _, enemy in ipairs(LiveFolder:GetChildren()) do
+                if enemy:IsA("Model") and enemy ~= character then
+                    local humanoid = enemy:FindFirstChildOfClass("Humanoid")
+                    local enemyRoot = enemy:FindFirstChild("HumanoidRootPart")
+                    
+                    if humanoid and enemyRoot and root then
+                        local distance = (root.Position - enemyRoot.Position).Magnitude
+                        
+                        if distance <= DungeonState.killDistance and humanoid.Health > 0 then
+                            humanoid.Health = 0
+                            if humanoid.Health > 0 then
+                                humanoid:ChangeState(Enum.HumanoidStateType.Dead)
+                            end
+                        end
+                    end
+                end
+            end
+            task.wait(0.15)
+        end
+    end)
+end
+DungeonTab:CreateToggle({
+    Name = 'Kill Nearby Enemies',
+    CurrentValue = false,
+    Callback = function(value)
+        DungeonState.killNearby = value
+        if value then
+            runKillNearby()
+        end
+    end,
+})
+DungeonTab:CreateSlider({
+    Name = 'Kill Distance',
+    CurrentValue = 60,
+    Increment = 5,
+    Range = {10, 2000},
+    Callback = function(value)
+        DungeonState.killDistance = value
+    end,
+})
+DungeonTab:CreateToggle({
+    Name = 'Auto Inf Tower',
+    CurrentValue = false,
+    Callback = function(value)
+        DungeonState.autoInfTower = value
+        
+        if value then
+            task.spawn(function()
+                local maxDistance = 300 
+
+                while DungeonState.autoInfTower do
+                    task.wait(0.01)
+                    
+                    if isTeleportingInf then 
+                        task.wait(0.5)
+                        continue 
+                    end
+
+                    local character = LocalPlayer.Character
+                    local hrp = getHumanoidRoot(character)
+                    if not hrp then continue end
+
+                    local enemiesToKill = {}
+                    
+                    for _, obj in ipairs(LiveFolder:GetChildren()) do
+                        if obj:IsA("Model") and obj ~= character then
+                            local hum = obj:FindFirstChildOfClass("Humanoid")
+                            local root = getHumanoidRoot(obj)
+                            
+                            if hum and hum.Health > 0 and root then
+                                local distance = (hrp.Position - root.Position).Magnitude
+                                if distance <= maxDistance then
+                                    table.insert(enemiesToKill, {
+                                        model = obj,
+                                        root = root,
+                                        dist = distance
+                                    })
+                                end
+                            end
+                        end
+                    end
+
+                    if #enemiesToKill > 0 then
+                        table.sort(enemiesToKill, function(a, b) return a.dist < b.dist end)
+                        local target = enemiesToKill[1]
+                        
+                        hrp.CFrame = target.root.CFrame * CFrame.new(0, 0, 2)
+                        task.wait(0.05) 
+                        fireBladeCombat(false, target.root.Position, target.root.CFrame)
+                        
+                        if FarmState.autoKillEnabled then
+                            target.model:FindFirstChildOfClass("Humanoid").Health = 0
+                        end
+                        
+                        task.wait(0.5)
+                    else
+                        local targetNPC = nil
+                        local minNpcDist = math.huge
+                        local floors = workspace:FindFirstChild("Floors")
+                        
+                        if floors then
+                            for _, floor in ipairs(floors:GetChildren()) do
+                                local npc = floor:FindFirstChild("NPC")
+                                if npc then
+                                    local npcRoot = npc:FindFirstChild("HumanoidRootPart") or npc:FindFirstChildWhichIsA("BasePart")
+                                    if npcRoot then
+                                        local d = (hrp.Position - npcRoot.Position).Magnitude
+                                        if d < minNpcDist then
+                                            minNpcDist = d
+                                            targetNPC = npc
+                                        end
+                                    end
+                                end
+                            end
+                        end
+
+                        if targetNPC then
+                            local npcRoot = targetNPC:FindFirstChild("HumanoidRootPart") or targetNPC:FindFirstChildWhichIsA("BasePart")
+                            local prompt = targetNPC:FindFirstChildOfClass("ProximityPrompt")
+                            
+                            if npcRoot and not isTeleportingInf then
+                                hrp.CFrame = npcRoot.CFrame * CFrame.new(0, 0, 3)
+                                task.wait(0.2)
+                                
+                                if prompt and prompt.Enabled then
+                                    isTeleportingInf = true 
+                                    
+                                    pcall(function()
+                                        prompt.MaxActivationDistance = 999
+                                        prompt.RequiresLineOfSight = false
+                                        prompt:InputHoldBegin()
+                                        task.wait(0.3)
+                                        prompt:InputHoldEnd()
+                                    end)
+
+                                    task.wait(2.5) 
+                                    isTeleportingInf = false
+                                end
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+    end,
+})
+DungeonTab:CreateLabel("To use the Auto Inf Tower, toggle on FPS Boost, spam-madara with a delay of 0.05 and toggle on kill nearby enemies with a distance of 10-20")
+local AbillitiesSpam = Window:CreateTab('Abillities', 4483362458)
+
+local AbillityState = {
+    selectedSukunaAbility = "SukunaFirst",
+    spamSukuna = false,
+    sukunaDelay = 0.75,
+    selectedGojoAbility = "GojoFirst",
+    spamGojo = false,                  
+    gojoDelay = 0.75,                  
+    spamMadara = false,
+    madaraDelay = 0.75,
+    fireDelay = 0.05,
+}
+local function loopAbility(enabledKey, fireFn, delayKey)
+    task.spawn(function()
+        while AbillityState[enabledKey] do
+            fireFn()
+            local waitTime = AbillityState[delayKey or "fireDelay"]
+            task.wait(math.max(waitTime, 0.01))
+        end
+    end)
+end
+local function fireGojo()
+    local Event = game:GetService("ReplicatedStorage"):FindFirstChild("KevRemotes") 
+        and game:GetService("ReplicatedStorage").KevRemotes:FindFirstChild("GojoAbilities")
+    
+    if Event then
+        Event:FireServer(
+            game:GetService("Players").LocalPlayer,
+            AbillityState.selectedGojoAbility
+        )
+    end
+end
+local function fireSukuna()
+    local Event = game:GetService("ReplicatedStorage"):FindFirstChild("KevRemotes") 
+        and game:GetService("ReplicatedStorage").KevRemotes:FindFirstChild("SukunaAbilities")
+    
+    if Event then
+        Event:FireServer(
+            game:GetService("Players").LocalPlayer,
+            AbillityState.selectedSukunaAbility
+        )
+    end
+end
+local function fireMadara()
+    local Event = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes") 
+        and game:GetService("ReplicatedStorage").Remotes:FindFirstChild("AbilityHandler")
+    
+    if Event then
+        Event:FireServer("MadaraFifth")
+    end
+end
+AbillitiesSpam:CreateDropdown({
+    Name = 'Sukuna Abillities',
+    Options = {
+        [1] = 'Cleave',           
+        [2] = 'Dismantle',        
+        [3] = 'Cleave Dance',     
+        [4] = 'Fire Arrow',       
+        [5] = 'Malevolent Shrine' 
+    },
+    CurrentOption = { [1] = 'Cleave' },
+    Callback = function(selection)
+        local map = {
+            ['Cleave'] = "SukunaFirst",
+            ['Dismantle'] = "SukunaSecond",
+            ['Cleave Dance'] = "SukunaThird",
+            ['Fire Arrow'] = "SukunaFourth",
+            ['Malevolent Shrine'] = "SukunaFifth"
+        }
+        AbillityState.selectedSukunaAbility = map[selection[1]] or "SukunaFirst"
+    end,
+})
+AbillitiesSpam:CreateToggle({
+    Name = 'Spam Sukuna Selected',
+    CurrentValue = false,
+    Callback = function(value)
+        AbillityState.spamSukuna = value
+        if value then
+            loopAbility('spamSukuna', fireSukuna, 'sukunaDelay')
+        end
+    end,
+})
+AbillitiesSpam:CreateSlider({
+    Name = 'Sukuna Spam Speed',
+    CurrentValue = 0.75,
+    Increment = 0.05,
+    Range = { [1] = 0.01, [2] = 1 },
+    Callback = function(value)
+        AbillityState.sukunaDelay = value
+    end,
+})
+AbillitiesSpam:CreateDropdown({
+    Name = 'Gojo Abillities',
+    Options = {
+        [1] = 'Blue',           
+        [2] = 'Red',        
+        [3] = 'Hollow Purple',     
+        [4] = 'Infinite Void',       
+        [5] = 'Enlightenment' 
+    },
+    CurrentOption = { [1] = 'Blue' },
+    Callback = function(selection)
+        local map = {
+            ['Blue'] = "GojoFirst",
+            ['Red'] = "GojoSecond",
+            ['Hollow Purple'] = "GojoThird",
+            ['Infinite Void'] = "GojoFourth",
+            ['Enlightenment'] = "GojoFifth"
+        }
+        AbillityState.selectedGojoAbility = map[selection[1]] or "GojoFirst"
+    end,
+})
+
+AbillitiesSpam:CreateToggle({
+    Name = 'Spam Gojo Selected',
+    CurrentValue = false,
+    Callback = function(value)
+        AbillityState.spamGojo = value
+        if value then
+            loopAbility('spamGojo', fireGojo, 'gojoDelay')
+        end
+    end,
+})
+
+AbillitiesSpam:CreateSlider({
+    Name = 'Gojo Spam Speed',
+    CurrentValue = 0.75,
+    Increment = 0.05,
+    Range = { [1] = 0.01, [2] = 1 },
+    Callback = function(value)
+        AbillityState.gojoDelay = value
+    end,
+})
+AbillitiesSpam:CreateToggle({
+    Name = 'Spam Madara',
+    CurrentValue = false,
+    Callback = function(value)
+        AbillityState.spamMadara = value
+        if value then
+            loopAbility('spamMadara', fireMadara, 'madaraDelay')
+        end
+    end,
+})
+AbillitiesSpam:CreateSlider({
+    Name = 'Madara Spam Speed',
+    CurrentValue = 0.75,
+    Increment = 0.05,
+    Range = { [1] = 0.01, [2] = 1 },
+    Callback = function(value)
+        AbillityState.madaraDelay = value
+    end,
+})
+local MiscTab = Window:CreateTab('Misc', 4483362458)
+local MiscState = {
+    autoPrestige = false,
+    autoPrestigeDelay = 20,
+    toggleVFX = true,
+    freezeTimers = true
+}
+local function runAutoPrestige()
+    task.spawn(function()
+        while MiscState.autoPrestige do
+            pcall(function()
+                if ChangeNpcValueRemote then
+                    ChangeNpcValueRemote:FireServer(LocalPlayer.PlayerValues.DialogNpc, "Prestige")
+                end
+                task.wait(0.5)
+                if PrestigeEvent then
+                    PrestigeEvent:FireServer()
+                end
+            end)
+            task.wait(MiscState.autoPrestigeDelay)
+        end
+    end)
+end
+MiscTab:CreateToggle({
+    Name = 'Auto Prestige',
+    CurrentValue = false,
+    Callback = function(value)
+        MiscState.autoPrestige = value
+        if value then
+            runAutoPrestige()
+        end
+    end,
+})
+MiscTab:CreateSlider({
+    Name = 'Prestige Delay (Seconds)',
+    CurrentValue = 20,
+    Increment = 1,
+    Range = {1, 60},
+    Callback = function(value)
+        MiscState.autoPrestigeDelay = value
+    end,
+})
+MiscTab:CreateToggle({
+    Name = 'Toggle Ability VFX (Particles/Trails)',
+    CurrentValue = true,
+    Callback = function(value)
+        if not value then
+            for _, part in ipairs(workspace:GetDescendants()) do
+                if part:IsA('ParticleEmitter') or part:IsA('Trail') then
+                    part.Enabled = false
+                end
+            end
+        else
+            for _, part in ipairs(workspace:GetDescendants()) do
+                if part:IsA('ParticleEmitter') or part:IsA('Trail') then
+                    part.Enabled = true
+                end
+            end
+        end
+    end,
+})
+local States = {
+    fpsBoost = false,
+    toggleVFX = true
+}
+local function performRespawnCleanup()
+    if not States.fpsBoost then return end
+    
+    local Players = game:GetService("Players")
+    local LocalPlayer = Players.LocalPlayer
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    
+    pcall(function()
+        local remotes = {
+            ReplicatedStorage.Remotes:FindFirstChild("Replicate"),
+            ReplicatedStorage.Remotes:FindFirstChild("Replicator"),
+            ReplicatedStorage.ReiNew:FindFirstChild("DamageShower"),
+            ReplicatedStorage.ReiNew:FindFirstChild("VFXReplicate")
+        }
+        
+        for _, remote in ipairs(remotes) do
+            if remote and remote:IsA("RemoteEvent") then
+                remote:Destroy() 
+            end
+        end
+    end)
+    pcall(function()
+        local targets = {
+            game:GetService("StarterPlayer").StarterPlayerScripts:FindFirstChild("Replicator"),
+            game:GetService("StarterPlayer").StarterPlayerScripts:FindFirstChild("VFXReplicator"),
+            LocalPlayer.PlayerScripts:FindFirstChild("Replicator"),
+            LocalPlayer.PlayerScripts:FindFirstChild("VFXReplicator")
+        }
+        
+        for _, obj in ipairs(targets) do
+            if obj then
+                obj.Disabled = true
+                obj:Destroy()
+            end
+        end
+    end)
+    pcall(function()
+        local madaraVFX = ReplicatedStorage.VFX:FindFirstChild("Madara")
+        if madaraVFX and madaraVFX:FindFirstChild("SusRigged") then
+            madaraVFX.SusRigged:Destroy()
+        end
+    end)
+    pcall(function()
+        local function wipe(folder)
+            if not folder then return end
+            local scripts = folder:FindFirstChild("Scripts")
+            local modules = scripts and scripts:FindFirstChild("NewModules")
+            if modules then
+                if modules:FindFirstChild("ClientRemotes") then modules.ClientRemotes:Destroy() end
+                if modules:FindFirstChild("Hit") then modules.Hit:Destroy() end
+            end
+        end
+        
+        wipe(LocalPlayer:FindFirstChild("Backpack"))
+        wipe(game:GetService("StarterPack"))
+    end)
+end
+game:GetService("Players").LocalPlayer.CharacterAdded:Connect(function()
+    if States.fpsBoost then
+        task.wait(1)
+        performRespawnCleanup()
+    end
+end)
+MiscTab:CreateToggle({
+    Name = 'FPS Boost',
+    CurrentValue = false,
+    Callback = function(value)
+        States.fpsBoost = value 
+        if value then
+            performRespawnCleanup()
+        end
+    end,
+})
+local MiscState = {
+    freezeTimers = true
+}
+
+local function applyTimerFreeze()
+    if not MiscState.freezeTimers then return end
+
+    task.wait(1) 
+    
+    local scripts = LocalPlayer:FindFirstChild("Backpack") and LocalPlayer.Backpack:FindFirstChild("Scripts")
+    if scripts then
+        pcall(function()
+            local luck = scripts:FindFirstChild("LuckTimer")
+            local xp = scripts:FindFirstChild("DoubleXPTimer")
+            
+            if luck then luck.Disabled = true end
+            if xp then xp.Disabled = true end
+            print("Timers freeze")
+        end)
+    end
+end
+LocalPlayer.CharacterAdded:Connect(function()
+    if MiscState.freezeTimers then
+        applyTimerFreeze()
+    end
+end)
+MiscTab:CreateToggle({
+    Name = 'Freeze Luck & XP Timers',
+    CurrentValue = true,
+    Callback = function(value)
+        MiscState.freezeTimers = value
+        
+        if value then
+            applyTimerFreeze()
+        else    
+            local scripts = LocalPlayer:FindFirstChild("Backpack") and LocalPlayer.Backpack:FindFirstChild("Scripts")
+            if scripts then
+                pcall(function()
+                    if scripts:FindFirstChild("LuckTimer") then scripts.LuckTimer.Disabled = false end
+                    if scripts:FindFirstChild("DoubleXPTimer") then scripts.DoubleXPTimer.Disabled = false end
+                end)
+            end
+        end
+    end,
+})
+if MiscState.freezeTimers then
+    applyTimerFreeze()
+end
+MiscTab:CreateToggle({
+    Name = 'Anti-AFK Kick',
+    CurrentValue = true,
+    Callback = function(value)
+        _G.AntiAFKEnabled = value
+        if value then
+            if getconnections then
+                for _, connection in pairs(getconnections(LocalPlayer.Idled)) do
+                    if connection["Disable"] then
+                        connection["Disable"](connection)
+                    elseif connection["Disconnect"] then
+                        connection["Disconnect"](connection)
+                    end
+                end
+            else
+                local VirtualUser = game:GetService("VirtualUser")
+                if not _G.AntiAFKHooked then
+                    _G.AntiAFKHooked = true
+                    LocalPlayer.Idled:Connect(function()
+                        if _G.AntiAFKEnabled then
+                            pcall(function()
+                                VirtualUser:CaptureController()
+                                VirtualUser:ClickButton2(Vector2.new())
+                            end)
+                        end
+                    end)
+                end
+            end
+        end
+    end,
+})
+MiscTab:CreateToggle({
+    Name = 'Disable 3D Rendering',
+    CurrentValue = false,
+    Callback = function(value)
+        RunService:Set3dRenderingEnabled(not value)
+    end,
+})
+MiscTab:CreateButton({
+    Name = 'Redeem Codes',
+    Callback = function()
+        local RedeemRemote = game:GetService("ReplicatedStorage"):FindFirstChild("RemoteEvents") 
+            and game:GetService("ReplicatedStorage").RemoteEvents:FindFirstChild("CodeRemote")
+
+        if RedeemRemote then
+            local codes = {
+                'AURA', 'AstrozGift', 'BESTXL', 'DECLANITORY', 'DeathsGift', 
+                'DovahsGift', 'DupeFix', 'GiftOfStenght', 'HAPPYNEWYEAR', 
+                'HotFixSorry', 'NisansGift', 'RestOfReward', 'TURKEYTURKEY', 
+                'XL30K', 'XLbEAterFIT'
+            }
+            for _, code in ipairs(codes) do
+                pcall(function()
+                    RedeemRemote:FireServer(code)
+                end)
+                task.wait()
+            end
+        end
+    end,
+})
+MiscTab:CreateButton({
+    Name = 'Low Server Hop',
+    Callback = function()
+        Rayfield:Notify({
+            Title = "Server hopping",
+            Content = "Searching Low Servers",
+            Duration = 5,
+            Image = 4483362458,
+        })
+
+        local Lowest = "playing"
+        local HTTPService = game:GetService("HttpService")
+        local TeleportService = game:GetService("TeleportService")
+
+        local success, servers = pcall(function()
+           return HTTPService:JSONDecode(game:HttpGet(
+               "https://games.roblox.com/v1/games/" .. tostring(game.PlaceId) .. "/servers/Public?limit=100"
+           )).data
+        end)
+
+        if not success or not servers then 
+            return Rayfield:Notify({Title = "Error", Content = "I couldn't get the list of servers.", Duration = 3}) 
+        end
+
+        local server = servers[1]
+
+        for i, svr in pairs(servers) do
+           if svr.id ~= game.JobId and svr[Lowest] < server[Lowest] then
+               server = svr
+           end
+        end
+
+        if server and server.id ~= game.JobId then
+            TeleportService:TeleportToPlaceInstance(game.PlaceId, server.id)
+        else
+            Rayfield:Notify({Title = "Damn", Content = "You are already on the emptiest server I could find!", Duration = 3})
+        end
+    end,
+})
+MiscTab:CreateButton({
+    Name = "Rejoin",
+    Callback = function()
+        local Players = game:GetService("Players")
+        local TeleportService = game:GetService("TeleportService")
+        local PlaceId = game.PlaceId
+        local JobId = game.JobId
+        local LocalPlayer = Players.LocalPlayer
+
+        if #Players:GetPlayers() <= 1 then
+            LocalPlayer:Kick("\nRejoining...")
+            task.wait(0.5)
+            TeleportService:Teleport(PlaceId, LocalPlayer)
+        else
+            TeleportService:TeleportToPlaceInstance(PlaceId, JobId, LocalPlayer)
+        end
+    end,
+})
