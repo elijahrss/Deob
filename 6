@@ -1,0 +1,2830 @@
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+local TweenService = game:GetService("TweenService")
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TeleportService = game:GetService("TeleportService")
+local HttpService = game:GetService("HttpService")
+local VirtualUser = game:GetService("VirtualUser")
+local StarterGui = game:GetService("StarterGui")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+
+local Window = Rayfield:CreateWindow({
+    Name = 'Legends Re:Written by Kick',
+    LoadingTitle = 'Loading... Reinicie o anti-kick antes de usar! ',
+    LoadingSubtitle = 'Kick é um gostoso',
+    ConfigurationSaving = {
+        Enabled = true,
+        FolderName = 'KickHub',
+        FileName = 'LegendsReWritten_Client',
+    },
+    Theme = 'Serenity',
+    ToggleUIKeybind = 'K',
+})
+
+Rayfield:Notify({
+    Title = "Script Privado",
+    Content = "Bom proveito. Tenho que arrumar ele depois, tá todo bagunçado.",
+    Duration = 7,
+    Image = 4483362458,
+})
+
+local MainState = {
+    autoQuest = false,
+    autoSellOre = false,
+    godMode = false,
+    noclip = false,
+	antiKick = true
+}
+
+local FarmState = {
+    dropsActive = false,
+    tweenSpeed = 300,
+    bowActive = false,
+    bowRange = 100,
+    bazookaActive = false,
+    bazookaRange = 100,marineGunActive = false,
+    marineGunRange = 100,
+    currentTarget = nil,
+    lightBeamActive = false,
+    lightBeamRange = 100,
+	selectedArrow = "BronzeArrows",
+    autoAmmo = false,
+	killAura = false,
+    killAuraRange = 10,
+    autoMobFarm = false,
+    selectedMobName = "",
+	autoCollectDrops = false,
+	farmAngle = "Above",
+    farmDistance = 5,
+	autoMine = false,
+    farmAllOres = false,
+    farmSelectedOre = false,
+    selectedOreName = "",
+    autoCounter = false,
+    speedAFK = false,
+    farmNearest = false,
+    farmNearestRange = 100,
+    farmTargetName = "Any",
+    selectedMobNames = {},
+    hitboxExpander = false,
+    autoFish = false,
+    autoCook = false,
+    selectedFood = "",
+    hitboxSize = 20
+}
+
+local EquipState = {
+    Enabled = false,
+    SelectedTool = "",
+    BackpackConnection = nil,
+    CharConnection = nil
+}
+local QuestState = {
+    autoQuest = false,
+    selectedQuests = {},
+    delay = 1
+}
+
+local PlantState = {
+    autoPlant = false,
+    selectedPlant = "",
+    selectedPlants = {},
+    plantList = {} 
+}
+
+local TradeState = {
+    target1 = nil
+}
+
+local ShopState = {
+    selectedCategory = "",
+    selectedItem = "",
+    buyAmount = 1,
+    sellSelectedItems = {}, 
+    autoSellSelected = false, 
+    searchFilter = "" 
+}
+
+local GlitchState = {
+    Amount = 1,
+    Category = "Materials"
+}
+
+local GodConnection
+local NoclipConnection
+local InventoryConnections = {}
+local SellDropdown 
+
+-- // Helper Functions //
+
+-- Função para ler os ingredientes disponíveis na GUI
+local function GetCookingIngredients()
+    local ingredients = {}
+    local seen = {}
+    
+    local pGui = LocalPlayer:FindFirstChild("PlayerGui")
+    local cookGui = pGui and pGui:FindFirstChild("CookingGui")
+    
+    -- Verifica se o inventário existe
+    if cookGui and cookGui:FindFirstChild("Frame") and cookGui.Frame:FindFirstChild("Invy") then
+        for _, itemFrame in pairs(cookGui.Frame.Invy:GetChildren()) do
+            -- Ignora scripts ou layouts, foca nos botões/frames
+            if itemFrame:IsA("ImageButton") or itemFrame:IsA("Frame") then
+                local idObj = itemFrame:FindFirstChild("ItemID") -- O objeto que tem o nome
+                local qtyObj = itemFrame:FindFirstChild("own")   -- O objeto que tem "x:123"
+                
+                if idObj and qtyObj then
+                    -- Pega o nome (geralmente ItemID é um Value, mas previno se for string)
+                    local name = idObj.Value 
+                    
+                    -- Se tiver nome, adiciona na lista
+                    if name and name ~= "" then
+                        if not seen[name] then
+                            table.insert(ingredients, name)
+                            seen[name] = true
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    table.sort(ingredients)
+    if #ingredients == 0 then table.insert(ingredients, "Abra a panela primeiro!") end
+    return ingredients
+end
+
+-- Função para checar quantidade atual de um item específico (x:134 -> 134)
+local function GetIngredientQuantity(itemName)
+    local pGui = LocalPlayer:FindFirstChild("PlayerGui")
+    local cookGui = pGui and pGui:FindFirstChild("CookingGui")
+    
+    if cookGui and cookGui.Frame and cookGui.Frame.Invy then
+        for _, itemFrame in pairs(cookGui.Frame.Invy:GetChildren()) do
+            local idObj = itemFrame:FindFirstChild("ItemID")
+            local qtyObj = itemFrame:FindFirstChild("own")
+            
+            if idObj and idObj.Value == itemName and qtyObj then
+                -- Limpeza da string: Pega "x:134" e transforma em "134"
+                local rawText = qtyObj.ContentText or qtyObj.Text -- "x:134"
+                local cleanText = string.gsub(rawText, "x:", "")  -- "134"
+                return tonumber(cleanText) or 0
+            end
+        end
+    end
+    return 0
+end
+
+local function ToggleAutoEquip(bool)
+    EquipState.Enabled = bool
+    if EquipState.BackpackConnection then EquipState.BackpackConnection:Disconnect() EquipState.BackpackConnection = nil end
+    if EquipState.CharConnection then EquipState.CharConnection:Disconnect() EquipState.CharConnection = nil end
+
+    if bool then
+        local bp = LocalPlayer:WaitForChild("Backpack", 5)
+        if bp then
+            EquipState.BackpackConnection = bp.ChildAdded:Connect(function(child)
+                if child:IsA("Tool") and child.Name == EquipState.SelectedTool and EquipState.Enabled then
+                    task.wait() TryEquip()
+                end
+            end)
+        end
+        EquipState.CharConnection = LocalPlayer.CharacterAdded:Connect(function(newChar)
+            local newBp = LocalPlayer:WaitForChild("Backpack", 10)
+            if newBp and EquipState.Enabled then
+                if EquipState.BackpackConnection then EquipState.BackpackConnection:Disconnect() end
+                EquipState.BackpackConnection = newBp.ChildAdded:Connect(function(child)
+                    if child:IsA("Tool") and child.Name == EquipState.SelectedTool and EquipState.Enabled then
+                        task.wait() TryEquip()
+                    end
+                end)
+                task.wait(1) TryEquip()
+            end
+        end)
+        TryEquip()
+    end
+end
+
+local function GetQuestList()
+    local list = {}
+    local questsFolder = LocalPlayer:FindFirstChild("Quests")
+    
+    if questsFolder then
+        for _, questFolder in pairs(questsFolder:GetChildren()) do
+            table.insert(list, questFolder.Name)
+        end
+    end
+    
+    table.sort(list)
+    if #list == 0 then table.insert(list, "No Quests Found") end
+    return list
+end
+
+local function GetClosestLiveEnemy(maxDistance)
+    local char = LocalPlayer.Character
+    local root = getRoot(char)
+    if not root then return nil end
+
+    local mobsFolder = Workspace:FindFirstChild("Mobs")
+    if not mobsFolder then return nil end
+
+    local closest, minDistance = nil, maxDistance or math.huge
+
+    for _, model in pairs(mobsFolder:GetChildren()) do
+        if model:IsA("Model") then
+            local targetRoot = model:FindFirstChild("HumanoidRootPart")
+            local targetHumanoid = model:FindFirstChild("Humanoid")
+
+            if targetRoot and targetHumanoid and targetHumanoid.Health > 0 then
+                local distance = (root.Position - targetRoot.Position).Magnitude
+                
+                if distance < minDistance then
+                    minDistance = distance
+                    closest = model
+                end
+            end
+        end
+    end
+    return closest
+end
+
+local function GetWeaponCategory(weaponName)
+    if string.find(weaponName, "Pickaxe") then return nil end
+
+    local rep = game:GetService("ReplicatedStorage")
+    
+    local possibleFolders = {rep:FindFirstChild("Weapons"), rep:FindFirstChild("Tools"), rep:FindFirstChild("Assets")}
+    
+    for _, folder in pairs(possibleFolders) do
+        if folder then
+            for _, category in pairs(folder:GetChildren()) do
+                if category:FindFirstChild(weaponName) then
+                    return category.Name 
+                end
+            end
+            if folder:FindFirstChild(weaponName) then
+                return "Weapon" 
+            end
+        end
+    end
+    
+    return "Unknown" 
+end
+
+local function GetOwnedTools()
+    local tools = {}
+    local dataFolder = LocalPlayer:FindFirstChild("Data")
+    
+    if dataFolder then
+        for _, item in pairs(dataFolder:GetChildren()) do
+            if item:IsA("IntValue") and item.Value > 0 then
+                local name = item.Name
+                if string.find(name, "Pickaxe") or GetWeaponCategory(name) ~= "Unknown" then
+                    table.insert(tools, name)
+                end
+            end
+        end
+    end
+    
+    table.sort(tools)
+    if #tools == 0 then table.insert(tools, "No Tools Found") end
+    return tools
+end
+
+local function GetShopCategories()
+    local cats = {}
+    local shopInfo = game:GetService("ReplicatedStorage"):FindFirstChild("ShopInfo")
+    
+    if shopInfo then
+        for _, folder in pairs(shopInfo:GetChildren()) do
+            if folder:IsA("Folder") and folder.Name ~= "Sell" then
+                table.insert(cats, folder.Name)
+            end
+        end
+    end
+    
+    table.sort(cats)
+    if #cats == 0 then table.insert(cats, "Loading...") end
+    return cats
+end
+
+local function GetShopItems(categoryName)
+    local items = {}
+    local shopInfo = game:GetService("ReplicatedStorage"):FindFirstChild("ShopInfo")
+    
+    if shopInfo and categoryName ~= "" and categoryName ~= "Loading..." then
+        local catFolder = shopInfo:FindFirstChild(categoryName)
+        if catFolder then
+            for _, item in pairs(catFolder:GetChildren()) do
+                if item:IsA("IntValue") then
+                    table.insert(items, item.Name)
+                end
+            end
+        end
+    end
+    
+    table.sort(items)
+    if #items == 0 then table.insert(items, "No Items Found") end
+    return items
+end
+
+local function GetUniqueOreNames()
+    local names = {}
+    local seen = {}
+    local oresFolder = Workspace:FindFirstChild("Ores")
+    
+    if oresFolder then
+        for _, ore in pairs(oresFolder:GetChildren()) do
+            if ore:IsA("Model") then
+                local cleanName = string.gsub(ore.Name, "%s*%d+$", "")
+                
+                if not seen[cleanName] then
+                    table.insert(names, cleanName)
+                    seen[cleanName] = true
+                end
+            end
+        end
+    end
+    
+    table.sort(names)
+    if #names == 0 then table.insert(names, "No Ores Found") end
+    return names
+end
+
+local function GetOwnedTools()
+    local tools = {}
+    local dataFolder = LocalPlayer:FindFirstChild("Data")
+    if dataFolder then
+        for _, item in pairs(dataFolder:GetChildren()) do
+            if item:IsA("IntValue") and item.Value > 0 then
+                if string.find(item.Name, "Pickaxe") or game:GetService("ReplicatedStorage").Weapons:FindFirstChild(item.Name, true) then
+                    table.insert(tools, item.Name)
+                end
+            end
+        end
+    end
+    table.sort(tools)
+    if #tools == 0 then table.insert(tools, "No Tools Found") end
+    return tools
+end
+
+local function FireToolActivate()
+    local char = LocalPlayer.Character
+    if not char then return end
+    local tool = char:FindFirstChildWhichIsA("Tool")
+    if tool then
+        local remote = tool:FindFirstChild("Activate", true)
+        if remote and remote:IsA("RemoteEvent") then
+            remote:FireServer()
+        else
+            tool:Activate()
+        end
+    end
+end
+
+local function GetUniquePlantNames()
+    local names = {}
+    local seen = {}
+    local plantsFolder = Workspace:FindFirstChild("Plants")
+    
+    if plantsFolder then
+        for _, plant in pairs(plantsFolder:GetChildren()) do
+            if plant:IsA("Model") then
+                local hasPrompt = false
+                for _, d in pairs(plant:GetDescendants()) do
+                    if d:IsA("ProximityPrompt") then hasPrompt = true break end
+                end
+
+                if hasPrompt then
+                    local cleanName = string.gsub(plant.Name, "%s*%d+$", "")
+                    if not seen[cleanName] then
+                        table.insert(names, cleanName)
+                        seen[cleanName] = true
+                    end
+                end
+            end
+        end
+    end
+    
+    table.sort(names)
+    if #names == 0 then table.insert(names, "No Plants Found") end
+    return names
+end
+
+local function GetUniqueMobNames()
+    local names = {}
+    local seen = {}
+    local mobsFolder = Workspace:FindFirstChild("Mobs")
+    
+    if mobsFolder then
+        for _, mob in pairs(mobsFolder:GetChildren()) do
+            local hum = mob:FindFirstChild("Humanoid")
+            
+            if hum and typeof(hum.Health) == "number" and hum.Health > 0 then
+                local cleanName = string.gsub(mob.Name, "%s*%d+$", "")
+                
+                if not seen[cleanName] then
+                    table.insert(names, cleanName)
+                    seen[cleanName] = true
+                end
+            end
+        end
+    end
+    
+    table.sort(names)
+    
+    if #names == 0 then
+        table.insert(names, "No Mobs Found (Refresh)")
+    end
+    
+    return names
+end
+
+local function FireToolActivate()
+    local char = LocalPlayer.Character
+    if not char then return end
+    
+    local tool = char:FindFirstChildWhichIsA("Tool")
+    if tool then
+        local remote = tool:FindFirstChild("Activate", true) 
+        
+        if remote and remote:IsA("RemoteEvent") then
+            remote:FireServer()
+        else
+            local scriptFolder = tool:FindFirstChild("SwordScript") or tool:FindFirstChild("ServerScript")
+            if scriptFolder then
+                local deepRemote = scriptFolder:FindFirstChild("Activate")
+                if deepRemote then deepRemote:FireServer() end
+            else
+                tool:Activate()
+            end
+        end
+    end
+end
+local function getCharacter()
+    return LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+end
+
+local function getRoot(char)
+    return char and char:FindFirstChild("HumanoidRootPart")
+end
+
+local function getIFrame()
+    local pGui = LocalPlayer:FindFirstChild("PlayerGui")
+    return pGui and pGui:FindFirstChild("Parkour") 
+        and pGui.Parkour:FindFirstChild("Script") 
+        and pGui.Parkour.Script:FindFirstChild("iFrame")
+end
+
+local function TweenTo(targetPosition)
+    local char = getCharacter()
+    local root = getRoot(char)
+    if not root then return end
+    
+    local distance = (targetPosition - root.Position).Magnitude
+    local time = distance / FarmState.tweenSpeed
+    
+    local tInfo = TweenInfo.new(time, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
+    local tween = TweenService:Create(root, tInfo, {CFrame = CFrame.new(targetPosition)})
+    
+    tween:Play()
+    tween.Completed:Wait()
+end
+
+local function GetPlayerNames()
+    local names = {}
+    for _, v in pairs(Players:GetPlayers()) do
+        table.insert(names, v.Name)
+    end
+    return names
+end
+
+local function GetClosestMob(rangeLimit)
+    local char = LocalPlayer.Character
+    if not char then return nil end
+    local root = getRoot(char)
+    if not root then return nil end
+
+    local mobsFolder = Workspace:FindFirstChild("Mobs")
+    if not mobsFolder then return nil end
+
+    local minDist = rangeLimit or math.huge
+    local closestMob = nil
+    local myPos = root.Position
+
+    for _, mob in pairs(mobsFolder:GetChildren()) do
+        local hrp = mob:FindFirstChild("HumanoidRootPart")
+        local hum = mob:FindFirstChild("Humanoid")
+        
+        if hrp and hum and hum.Health > 0 then
+            local dist = (hrp.Position - myPos).Magnitude
+            if dist < minDist then
+                minDist = dist
+                closestMob = mob
+            end
+        end
+    end
+    return closestMob
+end
+
+local function updateInventoryUI()
+    if not SellDropdown then return end
+    
+    local dataFolder = LocalPlayer:FindFirstChild("Data")
+    local items = {}
+    local filter = ShopState.searchFilter:lower()
+    
+    if dataFolder then
+        for _, v in pairs(dataFolder:GetChildren()) do
+            if v:IsA("IntValue") and v.Value > 0 then
+                if filter == "" or string.find(v.Name:lower(), filter) then
+                    table.insert(items, v.Name)
+                end
+            end
+        end
+    end
+    
+    table.sort(items)
+    if #items == 0 then table.insert(items, "No Items Found/Matched") end
+    
+    SellDropdown:Refresh(items)
+end
+
+local function setupInventoryObserver()
+    for _, conn in pairs(InventoryConnections) do conn:Disconnect() end
+    InventoryConnections = {}
+
+    local dataFolder = LocalPlayer:WaitForChild("Data", 10)
+    if dataFolder then
+        table.insert(InventoryConnections, dataFolder.ChildAdded:Connect(function()
+            updateInventoryUI()
+        end))
+        table.insert(InventoryConnections, dataFolder.ChildRemoved:Connect(function()
+            updateInventoryUI()
+        end))
+        updateInventoryUI()
+    end
+end
+
+-- // Logic Functions //
+
+local function runAutoCook()
+    task.spawn(function()
+        local RunService = game:GetService("RunService")
+        
+        while FarmState.autoCook do
+            local itemName = FarmState.selectedFood
+            
+            -- 1. Validações Básicas
+            if itemName == "" or itemName == "Abra a panela primeiro!" then
+                Rayfield:Notify({Title = "Erro", Content = "Selecione um ingrediente!", Duration = 2})
+                FarmState.autoCook = false
+                break
+            end
+
+            -- 2. Verifica a quantidade (Se acabou, para)
+            local qty = GetIngredientQuantity(itemName)
+            if qty <= 0 then
+                Rayfield:Notify({Title = "Auto Cook", Content = "Acabaram os ingredientes: " .. itemName, Duration = 3})
+                FarmState.autoCook = false
+                break
+            end
+
+            -- 3. Referências da GUI e Remote
+            local pGui = LocalPlayer:FindFirstChild("PlayerGui")
+            local cookGui = pGui and pGui:FindFirstChild("CookingGui")
+            local parkourScript = pGui and pGui:FindFirstChild("Parkour") and pGui.Parkour:FindFirstChild("Script")
+            
+            if cookGui and parkourScript then
+                local cookRemote = parkourScript:FindFirstChild("CookDish")
+                local slot1 = cookGui:FindFirstChild("Frame") 
+                              and cookGui.Frame:FindFirstChild("Cook") 
+                              and cookGui.Frame.Cook:FindFirstChild("Slot1") 
+                              and cookGui.Frame.Cook.Slot1:FindFirstChild("Item")
+
+                -- 4. Renomeia o Slot (Simulação Visual/Lógica que você pediu)
+                if slot1 then
+                    slot1.Name = itemName
+                end
+
+                -- 5. Executa o Cozimento (ZERO DELAY)
+                if cookRemote and workspace:FindFirstChild("CookingSpot") then
+                    pcall(function()
+                        -- InvokeServer pausa o script até o servidor responder.
+                        -- Isso é o mais rápido possível. Se colocar loop sem wait aqui trava o PC.
+                        cookRemote:InvokeServer(itemName, workspace.CookingSpot)
+                    end)
+                else
+                    -- Se não achar o remote ou o spot, espera um frame pra não crashar
+                    RunService.Heartbeat:Wait()
+                end
+            else
+                 -- Se a GUI fechou, espera um pouco pra ver se abre
+                RunService.Heartbeat:Wait()
+            end
+        end
+    end)
+end
+
+local function runAutoFish()
+    task.spawn(function()
+        while FarmState.autoFish do
+            local char = LocalPlayer.Character
+            local root = char and char:FindFirstChild("HumanoidRootPart")
+            local spawnsFolder = workspace:FindFirstChild("FishingSpawns")
+
+            if not root or not spawnsFolder then 
+                task.wait(1) 
+                continue 
+            end
+            local targetSpawn = nil
+            local minDist = math.huge
+            
+            for _, spawnPart in pairs(spawnsFolder:GetChildren()) do
+                local fishLeft = spawnPart:FindFirstChild("FishLeft")
+                if fishLeft and fishLeft:IsA("IntValue") and fishLeft.Value > 0 then
+                    local dist = (spawnPart.Position - root.Position).Magnitude
+                    
+                    if dist < minDist then
+                        minDist = dist
+                        targetSpawn = spawnPart
+                    end
+                end
+            end
+            if targetSpawn then
+                local fishLeft = targetSpawn:FindFirstChild("FishLeft")
+                local targetPos = targetSpawn.Position + Vector3.new(0, 3, 0)
+                TweenTo(targetPos)
+                while FarmState.autoFish and fishLeft and fishLeft.Value > 0 do
+                    local pGui = LocalPlayer:FindFirstChild("PlayerGui")
+                    local catchRemote = pGui and pGui:FindFirstChild("Fish") 
+                                      and pGui.Fish:FindFirstChild("Ado") 
+                                      and pGui.Fish.Ado:FindFirstChild("catch")
+                    
+                    if catchRemote then
+                        catchRemote:FireServer(targetSpawn)
+                        task.wait(2.5) 
+                    else
+                        break 
+                    end
+                    if not root or (targetSpawn.Position - root.Position).Magnitude > 20 then
+                        break
+                    end
+                end
+            else
+                task.wait(1)
+            end
+            
+            task.wait(0.1)
+        end
+    end)
+end
+
+local CounterConnection = nil
+local lastFireTime = 0
+
+local function runAutoCounter(enabled)
+    if CounterConnection then 
+        CounterConnection:Disconnect() 
+        CounterConnection = nil 
+    end
+
+    if enabled then
+        CounterConnection = game:GetService("RunService").Heartbeat:Connect(function()
+            local char = LocalPlayer.Character
+            local root = char and char:FindFirstChild("HumanoidRootPart")
+            if not root then return end
+
+            local mobsFolder = workspace:FindFirstChild("Mobs")
+            if not mobsFolder then return end
+
+            local pGui = LocalPlayer:FindFirstChild("PlayerGui")
+            local counterRemote = pGui and pGui:FindFirstChild("Parkour") 
+                                  and pGui.Parkour:FindFirstChild("Script") 
+                                  and pGui.Parkour.Script:FindFirstChild("Counter")
+            
+            if not counterRemote then return end
+
+            local closestMob = nil
+            local minDist = 50
+            for _, mob in pairs(mobsFolder:GetChildren()) do
+                local mobRoot = mob:FindFirstChild("HumanoidRootPart") or mob:FindFirstChild("Torso")
+                if mobRoot then
+                    local dist = (mobRoot.Position - root.Position).Magnitude
+                    if dist < minDist then
+                        minDist = dist
+                        closestMob = mob
+                    end
+                end
+            end
+            if closestMob then
+                local npc = closestMob:FindFirstChild("NPC")
+                if npc then
+                    local attacking = npc:FindFirstChild("attacking")
+                    
+                    if attacking and attacking:IsA("BoolValue") and attacking.Value == true then
+                        if (tick() - lastFireTime) >= 0.08 then
+                            counterRemote:FireServer()
+                            lastFireTime = tick()
+                        end
+                    end
+                end
+            end
+        end)
+    end
+end
+
+local HitboxConnection = nil
+local ProcessedMobs = {}
+
+local function runHitboxExpander(enabled)
+    if HitboxConnection then 
+        HitboxConnection:Disconnect() 
+        HitboxConnection = nil 
+    end
+
+    if not enabled then 
+        ProcessedMobs = {} 
+        return 
+    end
+
+    if enabled then
+        HitboxConnection = game:GetService("RunService").Heartbeat:Connect(function()
+            local char = LocalPlayer.Character
+            local myRoot = char and char:FindFirstChild("HumanoidRootPart")
+            if not myRoot then return end
+
+            local mobsFolder = Workspace:FindFirstChild("Mobs")
+            if not mobsFolder then return end
+            local size = FarmState.hitboxSize or 20
+            local triggerDistance = 20
+            for _, mob in pairs(mobsFolder:GetChildren()) do
+                if not ProcessedMobs[mob] then
+                    local mobRoot = mob:FindFirstChild("HumanoidRootPart") or mob:FindFirstChild("Torso")
+                    if mobRoot then
+                        local dist = (mobRoot.Position - myRoot.Position).Magnitude
+                        if dist <= triggerDistance then
+                            pcall(function()
+                                mobRoot.Size = Vector3.new(size, size, size)
+                                mobRoot.Transparency = 1
+                                mobRoot.BrickColor = BrickColor.new("Really blue")
+                                mobRoot.Material = Enum.Material.Neon
+                                mobRoot.CanCollide = false
+                            end)
+                            ProcessedMobs[mob] = true
+                        end
+                    end
+                end
+            end
+        end)
+    end
+end
+
+local function runAutoLightBeam()
+    task.spawn(function()
+        RunService.Heartbeat:Connect(function()
+            if not FarmState.lightBeamActive then return end
+
+            local char = LocalPlayer.Character
+            if char then
+                local tool = char:FindFirstChild("LightBeam")
+                if tool then
+                    local target = GetClosestMob(FarmState.lightBeamRange)
+                    if target then
+                        local targetRoot = target:FindFirstChild("HumanoidRootPart")
+                        if targetRoot then
+                            local serverScript = tool:FindFirstChild("ServerScript")
+                            if serverScript then
+                                local chargeRemote = serverScript:FindFirstChild("Charge")
+                                if chargeRemote then
+                                    chargeRemote:FireServer(targetRoot.Position)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+    end)
+end
+
+local function runMoneyGlitch()
+    local amount = GlitchState.Amount or 1
+    local Remotes = game:GetService("ReplicatedStorage").Remotes
+    task.spawn(function()
+        Remotes.BuyItem:FireServer("PrisonBox", "Purchaseables", amount)
+        for i = 1, amount do
+            Remotes.SellItem:FireServer("PrisonBox", "Sell", false)
+        end
+    end)
+end
+
+local function TryEquip()
+    if not EquipState.Enabled or EquipState.SelectedTool == "" or EquipState.SelectedTool == "Nenhuma Tool Encontrada" then return end
+    
+    local LocalPlayer = game:GetService("Players").LocalPlayer
+    local char = LocalPlayer.Character
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    local hum = char and char:FindFirstChild("Humanoid")
+
+    if char and backpack and hum and hum.Health > 0 then
+        local tool = backpack:FindFirstChild(EquipState.SelectedTool)
+        if tool then
+            hum:EquipTool(tool)
+            task.delay(0.1, function()
+                if tool.Parent == char then
+                    for _, desc in pairs(tool:GetDescendants()) do
+                        if desc:IsA("RemoteEvent") and (string.find(desc.Name, "Equip") or string.find(desc.Name, "Activate")) then
+                            pcall(function() desc:FireServer() end)
+                        end
+                    end
+                end
+            end)
+        end
+    end
+end
+
+local function ToggleAutoEquip(bool)
+    EquipState.Enabled = bool
+    
+    if EquipState.BackpackConnection then EquipState.BackpackConnection:Disconnect() EquipState.BackpackConnection = nil end
+    if EquipState.CharConnection then EquipState.CharConnection:Disconnect() EquipState.CharConnection = nil end
+
+    if bool then
+        local LocalPlayer = game:GetService("Players").LocalPlayer
+        
+        local bp = LocalPlayer:WaitForChild("Backpack", 5)
+        if bp then
+            EquipState.BackpackConnection = bp.ChildAdded:Connect(function(child)
+                if child:IsA("Tool") and child.Name == EquipState.SelectedTool and EquipState.Enabled then
+                    task.wait() 
+                    TryEquip()
+                end
+            end)
+        end
+        
+        EquipState.CharConnection = LocalPlayer.CharacterAdded:Connect(function(newChar)
+            local newBp = LocalPlayer:WaitForChild("Backpack", 10)
+            if newBp and EquipState.Enabled then
+                if EquipState.BackpackConnection then EquipState.BackpackConnection:Disconnect() end
+                
+                EquipState.BackpackConnection = newBp.ChildAdded:Connect(function(child)
+                    if child:IsA("Tool") and child.Name == EquipState.SelectedTool and EquipState.Enabled then
+                        task.wait() 
+                        TryEquip()
+                    end
+                end)
+                
+                task.wait(1)
+                TryEquip()
+            end
+        end)
+        
+        TryEquip()
+    end
+end
+
+local function GetBackpackTools()
+    local tools = {}
+    local LocalPlayer = game:GetService("Players").LocalPlayer
+    
+    if LocalPlayer and LocalPlayer:FindFirstChild("Backpack") then
+        for _, v in pairs(LocalPlayer.Backpack:GetChildren()) do
+            if v:IsA("Tool") then table.insert(tools, v.Name) end
+        end
+    end
+    if LocalPlayer.Character then
+        local current = LocalPlayer.Character:FindFirstChildWhichIsA("Tool")
+        if current then table.insert(tools, current.Name) end
+    end
+    table.sort(tools)
+    if #tools == 0 then table.insert(tools, "Nenhuma Tool Encontrada") end
+    return tools
+end
+
+local function performDynamicBuy()
+    local item = ShopState.selectedItem
+    local cat = ShopState.selectedCategory
+    local amount = ShopState.buyAmount
+    
+    if item ~= "" and cat ~= "" and item ~= "No Items Found" and amount > 0 then
+        local Event = game:GetService("ReplicatedStorage").Remotes.BuyItem
+        Event:FireServer(item, cat, amount)
+        
+        Rayfield:Notify({Title = "Shop", Content = "Comprando " .. amount .. "x " .. item, Duration = 2})
+        
+        if string.find(item, "Arrow") then
+             pcall(function() game:GetService("ReplicatedStorage").Remotes.AddArrows:FireServer(item) end)
+        end
+    else
+        Rayfield:Notify({Title = "Erro", Content = "Selecione Categoria, Item e Quantidade!", Duration = 2})
+    end
+end
+
+local function runAutoQuest()
+    task.spawn(function()
+        local QuestRemotes = game:GetService("ReplicatedStorage"):WaitForChild("QuestRemotes", 10)
+        if not QuestRemotes then return end
+        
+        local AddQuest = QuestRemotes:WaitForChild("AddQuest")
+        local ClaimReward = QuestRemotes:WaitForChild("ClaimQuestRewards")
+        
+        while QuestState.autoQuest do
+            local questsFolder = LocalPlayer:WaitForChild("Quests", 3)
+            
+            if questsFolder then
+                local currentActiveQuest = nil
+                local currentProgressObj = nil
+                
+                for _, qFolder in pairs(questsFolder:GetChildren()) do
+                    local prog = qFolder:WaitForChild("Progress", 1)
+                    
+                    if prog then
+                        currentActiveQuest = qFolder.Name
+                        currentProgressObj = prog
+                        break
+                    end
+                end
+                
+                if currentActiveQuest and currentProgressObj then
+                    if currentProgressObj.Value >= 100 then
+                        
+                        ClaimReward:FireServer()
+                        
+                        task.wait(0.5)
+                        
+                        local isSelected = false
+                        for _, name in pairs(QuestState.selectedQuests) do
+                            if name == currentActiveQuest then 
+                                isSelected = true 
+                                break 
+                            end
+                        end
+                        
+                        if isSelected then
+                            AddQuest:FireServer(currentActiveQuest)
+                        end
+                    else
+                    end
+                else
+                    if #QuestState.selectedQuests > 0 then
+                        for _, questToTake in pairs(QuestState.selectedQuests) do
+                            if questToTake ~= "No Quests Found" then
+                                AddQuest:FireServer(questToTake)
+                                
+                                task.wait(0.5) 
+                                break 
+                            end
+                        end
+                    end
+                end
+            else
+                task.wait(1)
+            end
+            
+            task.wait(1)
+        end
+    end)
+end
+
+local function getRootLocal(char)
+    return char and char:FindFirstChild("HumanoidRootPart")
+end
+
+local function getClosestMobRexl(range)
+    local char = game:GetService("Players").LocalPlayer.Character
+    local root = getRootLocal(char)
+    if not root then return nil end
+
+    local mobsFolder = workspace:FindFirstChild("Mobs")
+    if not mobsFolder then return nil end
+
+    local closest, minDist = nil, range or 500
+
+    for _, mob in pairs(mobsFolder:GetChildren()) do
+        if mob:IsA("Model") then
+            local hum = mob:FindFirstChild("Humanoid")
+            local pivot = mob:GetPivot()
+            local mobPos = pivot and pivot.Position
+            
+            if not mobPos and mob:FindFirstChild("HumanoidRootPart") then
+                mobPos = mob.HumanoidRootPart.Position
+            end
+
+            if hum and hum.Health > 0 and mobPos then
+                local dist = (root.Position - mobPos).Magnitude
+                if dist < minDist then
+                    minDist = dist
+                    closest = mob
+                end
+            end
+        end
+    end
+    return closest
+end
+
+local function TweenSafe(targetPos)
+    local char = game:GetService("Players").LocalPlayer.Character
+    local root = getRootLocal(char)
+    if not root then return end
+    
+    local dist = (targetPos - root.Position).Magnitude
+    
+    local speed = FarmState.tweenSpeed or 300
+    local time = math.max(dist / speed, 0.15) 
+    
+    local tInfo = TweenInfo.new(time, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
+    local tween = game:GetService("TweenService"):Create(root, tInfo, {CFrame = CFrame.new(targetPos)})
+    
+    tween:Play()
+    tween.Completed:Wait()
+end
+
+local function runFarmNearest()
+    task.spawn(function()
+        local TweenService = game:GetService("TweenService")
+        local RunService = game:GetService("RunService")
+        local Players = game:GetService("Players")
+        local DirectionOffsets = {
+            Above = Vector3.new(0, 1, 0),
+            Below = Vector3.new(0, -1, 0),
+            Behind = Vector3.new(0, 0, 1)
+        }
+        local function getRootSafe()
+            local char = Players.LocalPlayer.Character
+            return char and char:FindFirstChild("HumanoidRootPart")
+        end
+        local bv = Instance.new("BodyVelocity")
+        bv.Name = "FarmAntiGravity_Nearest"
+        bv.Velocity = Vector3.zero
+        bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+        bv.P = 10000
+        local function cleanVelocity()
+            if bv.Parent then bv.Parent = nil end
+        end
+        while FarmState.farmNearest do
+            local mobsFolder = Workspace:FindFirstChild("Mobs")
+            local targetMob = nil
+            local targetPart = nil
+            local minDist = math.huge 
+            local myRoot = getRootSafe()
+            if not myRoot then
+                cleanVelocity()
+                task.wait(0.5)
+                continue
+            end
+            if mobsFolder then
+                for _, mob in pairs(mobsFolder:GetChildren()) do
+                    if mob:IsA("Model") then
+                        local hrp = mob:FindFirstChild("HumanoidRootPart")
+                        local hum = mob:FindFirstChild("Humanoid")
+                        if hrp and hum and hum.Health > 0 then
+                            local dist = (hrp.Position - myRoot.Position).Magnitude
+                            if dist < minDist then
+                                minDist = dist
+                                targetMob = mob
+                                targetPart = hrp
+                            end
+                        end
+                    end
+                end
+            end
+            if targetMob and targetPart then
+                if myRoot and not bv.Parent then bv.Parent = myRoot end
+                while FarmState.farmNearest and targetMob.Parent and targetPart.Parent do
+                    local currentRoot = getRootSafe()
+                    if not currentRoot then break end
+                    if bv.Parent ~= currentRoot then bv.Parent = currentRoot end
+                    local hum = targetMob:FindFirstChild("Humanoid")
+                    if hum and hum.Health <= 0 then break end
+                    local mobCFrame = targetPart.CFrame
+                    local dirName = FarmState.farmAngle or "Above"
+                    local directionVec = DirectionOffsets[dirName] or DirectionOffsets.Above
+                    local finalOffset = directionVec * (FarmState.farmDistance or 5)
+                    local desiredPos = (mobCFrame * CFrame.new(finalOffset)).Position
+                    local dist = (desiredPos - currentRoot.Position).Magnitude
+                    local speed = FarmState.tweenSpeed or 300
+                    local time = math.max(dist / speed, 0.05)
+                    local tInfo = TweenInfo.new(time, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
+                    local tween = TweenService:Create(currentRoot, tInfo, {CFrame = CFrame.new(desiredPos)})
+                    tween:Play()
+                    RunService.Heartbeat:Wait()
+                end
+            else
+                RunService.Heartbeat:Wait()
+            end
+        end
+        
+        cleanVelocity()
+        bv:Destroy()
+    end)
+end
+
+local SpeedRespawnConnection = nil
+
+local function runSpeedAFK()
+    local function fireLightBounce()
+        local char = LocalPlayer.Character
+        local remote = game:GetService("ReplicatedStorage").Remotes:FindFirstChild("LightBounce")
+        
+        if char and remote then
+            pcall(function()
+                remote:FireServer(char, 2)
+            end)
+        end
+    end
+
+    fireLightBounce()
+
+    if SpeedRespawnConnection then SpeedRespawnConnection:Disconnect() end
+    
+    SpeedRespawnConnection = LocalPlayer.CharacterAdded:Connect(function()
+        if MainState.speedAFK then
+            task.wait(1)
+            fireLightBounce()
+        else
+            if SpeedRespawnConnection then SpeedRespawnConnection:Disconnect() end
+        end
+    end)
+    task.spawn(function()
+        while MainState.speedAFK do
+            pcall(function()
+                local pGui = LocalPlayer:FindFirstChild("PlayerGui")
+                if pGui and pGui:FindFirstChild("Parkour") then
+                    pGui.Parkour.Script.Dash:FireServer()
+                end
+            end)
+            task.wait(0.5)
+        end
+    
+        if SpeedRespawnConnection then 
+            SpeedRespawnConnection:Disconnect() 
+            SpeedRespawnConnection = nil 
+        end
+    end)
+end
+
+local function runAutoMine()
+    task.spawn(function()
+        while MainState.autoMine do
+            FireToolActivate()
+            task.wait(0.1)
+        end
+    end)
+end
+
+local function runOreFarm(mode)
+    task.spawn(function()
+        local TweenService = game:GetService("TweenService")
+        local RunService = game:GetService("RunService")
+        local Players = game:GetService("Players")
+        local bv = Instance.new("BodyVelocity")
+        bv.Name = "OreFarmAntiGravity"
+        bv.Velocity = Vector3.zero
+        bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+        bv.P = 10000
+
+        local function cleanVelocity()
+            if bv.Parent then bv.Parent = nil end
+        end
+        if mode == "selected" and (not MainState.selectedOreNames or #MainState.selectedOreNames == 0) then
+            Rayfield:Notify({Title = "Erro", Content = "Selecione pelo menos um minério", Duration = 2})
+            MainState.farmSelectedOre = false
+            return
+        end
+
+        while (mode == "all" and MainState.farmAllOres) or (mode == "selected" and MainState.farmSelectedOre) do
+            local oresFolder = Workspace:FindFirstChild("Ores")
+            local target = nil
+            local minDist = math.huge
+            local myChar = Players.LocalPlayer.Character
+            local myRoot = getRoot(myChar)
+
+            if not myRoot then
+                cleanVelocity()
+                task.wait(0.5)
+                continue
+            end
+            if oresFolder then
+                for _, ore in pairs(oresFolder:GetChildren()) do
+                    if ore:IsA("Model") then
+                        local hp = ore:FindFirstChild("HP")
+                    
+                        if hp and hp:IsA("IntValue") and hp.Value > 0 then
+                            local isMatch = false
+                            
+                            if mode == "all" then
+                                isMatch = true
+                            elseif mode == "selected" and MainState.selectedOreNames then
+                                for _, selectedName in pairs(MainState.selectedOreNames) do
+                                    if string.find(ore.Name, selectedName, 1, true) then
+                                        isMatch = true
+                                        break
+                                    end
+                                end
+                            end
+
+                            if isMatch then
+                                local orePos = ore:GetPivot().Position
+                                local dist = (orePos - myRoot.Position).Magnitude
+                                if dist < minDist then
+                                    minDist = dist
+                                    target = {Model = ore, HP = hp}
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+
+            if target then
+                if myRoot and not bv.Parent then bv.Parent = myRoot end
+                
+                local oreModel = target.Model
+                local oreHP = target.HP
+                while oreModel.Parent == oresFolder and oreHP.Value > 0 do
+                    if (mode == "all" and not MainState.farmAllOres) or (mode == "selected" and not MainState.farmSelectedOre) then break end
+                    
+                    if not Players.LocalPlayer.Character then break end
+                    local currentRoot = Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                    if not currentRoot then break end
+                    if bv.Parent ~= currentRoot then bv.Parent = currentRoot end
+                    local destPos = oreModel:GetPivot().Position
+                    local dist = (destPos - currentRoot.Position).Magnitude
+                    local speed = FarmState.tweenSpeed or 300
+                    local time = math.max(dist / speed, 0.05)
+                    local tInfo = TweenInfo.new(time, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
+                    local tween = TweenService:Create(currentRoot, tInfo, {CFrame = CFrame.new(destPos)})
+                    tween:Play()
+                    if dist < 15 then
+                        FireToolActivate()
+                    end
+                    RunService.Heartbeat:Wait()
+                end
+            else
+                RunService.Heartbeat:Wait()
+            end
+        end
+        cleanVelocity()
+        bv:Destroy()
+    end)
+end
+
+local function runAutoPlant()
+    task.spawn(function()
+        local TweenService = game:GetService("TweenService")
+        local RunService = game:GetService("RunService")
+        local Players = game:GetService("Players")
+        local bv = Instance.new("BodyVelocity")
+        bv.Name = "PlantFarmAntiGravity"
+        bv.Velocity = Vector3.zero
+        bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+        bv.P = 10000
+        local function cleanVelocity()
+            if bv.Parent then bv.Parent = nil end
+        end
+        local function getRootSafe()
+            local char = Players.LocalPlayer.Character
+            return char and char:FindFirstChild("HumanoidRootPart")
+        end
+        local function getActiveCollectable(model)
+            for _, desc in pairs(model:GetDescendants()) do
+                if desc:IsA("BoolValue") and desc.Name == "Collectable" then
+                    if desc.Value == true then
+                        return desc
+                    end
+                end
+            end
+            return nil
+        end
+
+        while PlantState.autoPlant do
+            local plantsFolder = Workspace:FindFirstChild("Plants")
+            local targetPlant = nil
+            local targetCollectable = nil
+            local minDist = math.huge
+            local myRoot = getRootSafe()
+            
+            if not myRoot then
+                cleanVelocity()
+                task.wait(0.5)
+                continue
+            end
+            if not PlantState.selectedPlants or #PlantState.selectedPlants == 0 then
+                task.wait(1)
+                continue
+            end
+            if plantsFolder then
+                local allPlants = plantsFolder:GetChildren()
+                
+                for i, plant in ipairs(allPlants) do
+                    if i % 100 == 0 then task.wait() end 
+                    if not PlantState.autoPlant then break end
+                    
+                    if plant:IsA("Model") then
+                        local isSelected = false
+                        for _, selectedName in pairs(PlantState.selectedPlants) do
+                            if string.find(plant.Name:lower(), selectedName:lower()) then
+                                isSelected = true
+                                break
+                            end
+                        end
+
+                        if isSelected then
+                            local foundCollectable = getActiveCollectable(plant)
+                            if foundCollectable then
+                                local pivot = plant:GetPivot()
+                                if pivot then
+                                    local dist = (pivot.Position - myRoot.Position).Magnitude
+                                    
+                                    if dist < minDist then
+                                        minDist = dist
+                                        targetPlant = plant
+                                        targetCollectable = foundCollectable
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            if targetPlant and targetCollectable then
+                if myRoot and not bv.Parent then bv.Parent = myRoot end
+                while PlantState.autoPlant and targetPlant.Parent and targetCollectable.Value == true do
+                    local currentRoot = getRootSafe()
+                    if not currentRoot then break end
+                    if bv.Parent ~= currentRoot then bv.Parent = currentRoot end
+                    local destPos = targetPlant:GetPivot().Position
+                    local dist = (destPos - currentRoot.Position).Magnitude
+                    local speed = FarmState.tweenSpeed or 300
+                    local time = math.max(dist / speed, 0.05)
+                    local tInfo = TweenInfo.new(time, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
+                    local tween = TweenService:Create(currentRoot, tInfo, {CFrame = CFrame.new(destPos)})
+                    tween:Play()
+                    if dist < 12 then
+                        for _, desc in pairs(targetPlant:GetDescendants()) do
+                            if desc:IsA("ProximityPrompt") then
+                                desc.HoldDuration = 0
+                                desc.RequiresLineOfSight = false
+                                desc.MaxActivationDistance = 50
+                                fireproximityprompt(desc)
+                            end
+                        end
+                    end
+                    
+                    RunService.Heartbeat:Wait()
+                end
+            else
+                task.wait(0.5)
+            end
+        end
+        
+        cleanVelocity()
+        bv:Destroy()
+    end)
+end
+local CollectDropConnection = nil
+local FolderRefreshConnection = nil
+local BackupLoop = nil
+
+local function collectSingleDrop(model)
+    task.spawn(function()
+        if not model then return end
+        
+        local touchPart = model:WaitForChild("Touched", 2)
+        
+        if touchPart then
+            local touchInterest = touchPart:WaitForChild("TouchInterest", 1)
+            
+            if touchInterest then
+                local char = LocalPlayer.Character
+                local root = char and char:FindFirstChild("HumanoidRootPart")
+                if root then
+                    firetouchinterest(root, touchPart, 0)
+                    firetouchinterest(root, touchPart, 1)
+                end
+            end
+        end
+    end)
+end
+
+local function startDropMonitoring()
+    local dropsFolder = Workspace:FindFirstChild("Drops")
+    
+    if not dropsFolder then 
+        return 
+    end
+
+    if CollectDropConnection then CollectDropConnection:Disconnect() end
+
+    CollectDropConnection = dropsFolder.ChildAdded:Connect(function(child)
+        if FarmState.autoCollectDrops then
+            collectSingleDrop(child)
+        end
+    end)
+
+    for _, drop in pairs(dropsFolder:GetChildren()) do
+        collectSingleDrop(drop)
+    end
+end
+
+local function runAutoCollectDrops(enabled)
+    FarmState.autoCollectDrops = enabled
+
+    if enabled then
+        startDropMonitoring()
+        Rayfield:Notify({Title = "Auto Collect All", Content = "Ativado", Duration = 2})
+
+        if not FolderRefreshConnection then
+            FolderRefreshConnection = Workspace.ChildAdded:Connect(function(child)
+                if child.Name == "Drops" and FarmState.autoCollectDrops then
+                    task.wait(0.5)
+                    startDropMonitoring()
+                end
+            end)
+        end
+
+        if not BackupLoop then
+            task.spawn(function()
+                while FarmState.autoCollectDrops do
+                    if Workspace:FindFirstChild("Drops") then
+                        for _, drop in pairs(Workspace.Drops:GetChildren()) do
+                            if drop:FindFirstChild("Touched") and drop.Touched:FindFirstChild("TouchInterest") then
+                                collectSingleDrop(drop)
+                            end
+                        end
+                    end
+                    task.wait(1)
+                end
+            end)
+        end
+    else
+        if CollectDropConnection then CollectDropConnection:Disconnect() CollectDropConnection = nil end
+        if FolderRefreshConnection then FolderRefreshConnection:Disconnect() FolderRefreshConnection = nil end
+        BackupLoop = nil
+        
+        Rayfield:Notify({Title = "Auto Collect All", Content = "Desativado", Duration = 2})
+    end
+end
+
+local function runKillAura()
+    task.spawn(function()
+        while FarmState.killAura do
+            local target = GetClosestMob(FarmState.killAuraRange)
+            if target then
+                FireToolActivate()
+                
+                local char = LocalPlayer.Character
+                if char then
+                    local godSpeed = char:FindFirstChild("GodSpeed")
+                    if godSpeed then
+                        local serverScript = godSpeed:FindFirstChild("ServerScript")
+                        if serverScript then
+                            local chargeRemote = serverScript:FindFirstChild("Charge")
+                            if chargeRemote then
+                                chargeRemote:FireServer()
+                            end
+                        end
+                    end
+                end
+            end
+            task.wait() 
+        end
+    end)
+end
+
+local DirectionOffsets = {
+    Above = Vector3.new(0, 1, 0),
+    Below = Vector3.new(0, -1, 0),
+    Behind = Vector3.new(0, 0, 1)
+}
+local function runAutoMobFarm()
+    task.spawn(function()
+        local TweenService = game:GetService("TweenService")
+        local RunService = game:GetService("RunService")
+        local Players = game:GetService("Players")
+        local DirectionOffsets = {
+            Above = Vector3.new(0, 1, 0),
+            Below = Vector3.new(0, -1, 0),
+            Behind = Vector3.new(0, 0, 1)
+        }
+        local function getRootSafe()
+            local char = Players.LocalPlayer.Character
+            return char and char:FindFirstChild("HumanoidRootPart")
+        end
+        local bv = Instance.new("BodyVelocity")
+        bv.Name = "FarmAntiGravity_Fixed"
+        bv.Velocity = Vector3.zero
+        bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+        bv.P = 10000
+        local function cleanVelocity()
+            if bv.Parent then bv.Parent = nil end
+        end
+
+        while FarmState.autoMobFarm do
+            local mobsFolder = Workspace:FindFirstChild("Mobs")
+            local targetMob = nil
+            local targetPart = nil
+            local minDist = math.huge
+            local myRoot = getRootSafe()
+            if not myRoot then
+                cleanVelocity()
+                task.wait(0.5)
+                continue
+            end
+            if mobsFolder and FarmState.selectedMobNames and #FarmState.selectedMobNames > 0 then
+                for _, mob in pairs(mobsFolder:GetChildren()) do
+                    if mob:IsA("Model") then
+                        local isMatch = false
+                        for _, name in pairs(FarmState.selectedMobNames) do
+                            if string.find(mob.Name:lower(), name:lower()) then
+                                isMatch = true
+                                break
+                            end
+                        end
+
+                        if isMatch then
+                            local hrp = mob:FindFirstChild("HumanoidRootPart")
+                            local hum = mob:FindFirstChild("Humanoid")
+                            if hrp and hum and hum.Health > 0 then
+                                local dist = (hrp.Position - myRoot.Position).Magnitude
+                                
+                                if dist < minDist then
+                                    minDist = dist
+                                    targetMob = mob
+                                    targetPart = hrp
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            if targetMob and targetPart then
+                if myRoot and not bv.Parent then bv.Parent = myRoot end
+
+                while FarmState.autoMobFarm and targetMob.Parent and targetPart.Parent do
+                    local currentRoot = getRootSafe()
+                    if not currentRoot then break end
+                    if bv.Parent ~= currentRoot then bv.Parent = currentRoot end
+                    local hum = targetMob:FindFirstChild("Humanoid")
+                    if hum and hum.Health <= 0 then break end
+                    local mobCFrame = targetPart.CFrame 
+                    local dirName = FarmState.farmAngle or "Above"
+                    local directionVec = DirectionOffsets[dirName] or DirectionOffsets.Above
+                    local finalOffset = directionVec * (FarmState.farmDistance or 5)
+                    local desiredPos = (mobCFrame * CFrame.new(finalOffset)).Position
+                    local dist = (desiredPos - currentRoot.Position).Magnitude
+                    local speed = FarmState.tweenSpeed or 300
+                    local time = math.max(dist / speed, 0.05)
+                    local tInfo = TweenInfo.new(time, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
+                    local tween = TweenService:Create(currentRoot, tInfo, {CFrame = CFrame.new(desiredPos)})
+                    tween:Play()
+                    RunService.Heartbeat:Wait()
+                end
+            else
+                RunService.Heartbeat:Wait()
+            end
+        end
+
+        cleanVelocity()
+        bv:Destroy()
+    end)
+end
+
+local AntiAfkConnection = nil
+
+local function removeAntiKickObjs()
+    pcall(function()
+        local playerGui = LocalPlayer:WaitForChild("PlayerGui", 5)
+        if not playerGui then return end
+
+        if playerGui:FindFirstChild("Parkour") and 
+           playerGui.Parkour:FindFirstChild("Parkour") and 
+           playerGui.Parkour.Parkour:FindFirstChild("Grab") then
+            playerGui.Parkour.Parkour.Grab:Destroy()
+        end
+
+        if playerGui:FindFirstChild("SwimmingGui") then
+            playerGui.SwimmingGui:Destroy()
+        end
+    end)
+end
+
+local function toggleProtection(enabled)
+    MainState.antiKick = enabled
+
+    if enabled then
+        removeAntiKickObjs()
+        if getconnections then
+            for _, conn in pairs(getconnections(LocalPlayer.Idled)) do
+                if conn.Disable then conn:Disable()
+                elseif conn.Disconnect then conn:Disconnect() end
+            end
+        else
+            if not AntiAfkConnection then
+                AntiAfkConnection = LocalPlayer.Idled:Connect(function()
+                    VirtualUser:CaptureController()
+                    VirtualUser:ClickButton2(Vector2.new())
+                end)
+            end
+        end
+        
+        StarterGui:SetCore('SendNotification', {Title = 'Anti-kick & Anti-ban', Text = 'Ativado'})
+    else
+        if AntiAfkConnection then
+            AntiAfkConnection:Disconnect()
+            AntiAfkConnection = nil
+        end
+        StarterGui:SetCore('SendNotification', {Title = 'Anti-kick & Anti-ban', Text = 'Desativado'})
+    end
+end
+
+LocalPlayer.CharacterAdded:Connect(function()
+    if MainState.antiKick then
+        task.wait(1)
+        removeAntiKickObjs()
+    end
+end)
+
+task.spawn(function()
+    local oldNamecall
+    oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+        local method = getnamecallmethod()
+        if MainState.antiKick and not checkcaller() then
+            if method == "Teleport" or method == "TeleportToPlaceInstance" then
+                StarterGui:SetCore('SendNotification', {Title = 'Anti-kick', Text = 'O jogo tentou, mas eu não deixei'})
+                return nil
+            end
+        end
+        return oldNamecall(self, ...)
+    end))
+
+    local oldTeleport
+    oldTeleport = hookfunction(TeleportService.Teleport, function(self, ...)
+        if MainState.antiKick and self == TeleportService then
+             StarterGui:SetCore('SendNotification', {Title = 'Anti-kick', Text = 'O jogo tentou de novo, mas eu não deixei'})
+             return nil
+        end
+        return oldTeleport(self, ...)
+    end)
+
+    local oldTPInstance
+    oldTPInstance = hookfunction(TeleportService.TeleportToPlaceInstance, function(self, ...)
+        if MainState.antiKick and self == TeleportService then
+             StarterGui:SetCore('SendNotification', {Title = 'Anti-kick', Text = 'O jogo tentou mais uma vez, mas eu não deixei'})
+             return nil
+        end
+        return oldTPInstance(self, ...)
+    end)
+end)
+
+local function runServerHop()
+    local PlaceId = game.PlaceId
+    local JobId = game.JobId
+    local servers = {}
+    
+    Rayfield:Notify({Title = "Server Hop", Content = "Buscando servidor...", Duration = 3})
+
+    local req = game:HttpGet("https://games.roblox.com/v1/games/" .. PlaceId .. "/servers/Public?sortOrder=Desc&limit=100&excludeFullGames=true")
+    local body = HttpService:JSONDecode(req)
+
+    if body and body.data then
+        for i, v in next, body.data do
+            if type(v) == "table" and tonumber(v.playing) and tonumber(v.maxPlayers) and v.playing < v.maxPlayers and v.id ~= JobId then
+                table.insert(servers, 1, v.id)
+            end
+        end
+    end
+
+    if #servers > 0 then
+        Rayfield:Notify({Title = "Server Hop", Content = "Teleportando...", Duration = 3})
+        TeleportService:TeleportToPlaceInstance(PlaceId, servers[math.random(1, #servers)], LocalPlayer)
+    else
+        Rayfield:Notify({Title = "Server Hop", Content = "Nenhum servidor encontrado, tenta de novo", Duration = 3})
+    end
+end
+
+local function runRejoin()
+    local PlaceId = game.PlaceId
+    local JobId = game.JobId
+    
+    if #game:GetService("Players"):GetPlayers() <= 1 then
+        LocalPlayer:Kick("\nRejoining...")
+        task.wait()
+        TeleportService:Teleport(PlaceId, LocalPlayer)
+    else
+        TeleportService:TeleportToPlaceInstance(PlaceId, JobId, LocalPlayer)
+    end
+end
+
+task.spawn(function()
+    local TeleportService = game:GetService("TeleportService")
+    local StarterGui = game:GetService("StarterGui")
+    
+    local oldNamecall
+    oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+        local method = getnamecallmethod()
+        
+        if MainState.antiKick and not checkcaller() then
+            if method == "Teleport" or method == "TeleportToPlaceInstance" then
+                StarterGui:SetCore('SendNotification', {Title = 'Anti-Kick', Text = 'O jogo tentou, mas eu não deixei'})
+                return nil 
+            end
+        end
+        return oldNamecall(self, ...)
+    end))
+
+    local oldTeleport
+    oldTeleport = hookfunction(TeleportService.Teleport, function(self, ...)
+        if MainState.antiKick and self == TeleportService then
+             StarterGui:SetCore('SendNotification', {Title = 'Anti-Kick', Text = 'O jogo tentou novamente, mas eu não deixei'})
+             return nil
+        end
+        return oldTeleport(self, ...)
+    end)
+
+    local oldTPInstance
+    oldTPInstance = hookfunction(TeleportService.TeleportToPlaceInstance, function(self, ...)
+        if MainState.antiKick and self == TeleportService then
+             StarterGui:SetCore('SendNotification', {Title = 'Anti-Kick', Text = 'O jogo continua tentando, mas eu não vou deixar'})
+             return nil
+        end
+        return oldTPInstance(self, ...)
+    end)
+end)
+
+local function IsMobNear(range)
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return false end
+    
+    local mobsFolder = Workspace:FindFirstChild("Mobs")
+    if not mobsFolder then return false end
+
+    for _, mob in pairs(mobsFolder:GetChildren()) do
+        local mRoot = mob:FindFirstChild("HumanoidRootPart")
+        local mHum = mob:FindFirstChild("Humanoid")
+        
+        if mRoot and mHum and mHum.Health > 0 then
+            if (mRoot.Position - root.Position).Magnitude <= range then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+local function applyGodMode(enabled)
+    if GodConnection then GodConnection:Disconnect() GodConnection = nil end
+    
+    if enabled then
+        local safeDistance = 50 
+        
+        GodConnection = RunService.Stepped:Connect(function()
+            if IsMobNear(safeDistance) then
+                local remote = getIFrame()
+                if remote then 
+                    remote:FireServer() 
+                    remote:FireServer() 
+                end
+            end
+        end)
+        
+        Rayfield:Notify({Title = "GodMode Inteligente", Content = "Ativa apenas perto de inimigos!", Duration = 3})
+    end
+end
+
+local function applyNoclip(enabled)
+    if NoclipConnection then NoclipConnection:Disconnect() NoclipConnection = nil end
+    if enabled then
+        NoclipConnection = RunService.Stepped:Connect(function()
+            local char = LocalPlayer.Character
+            if char then
+                for _, v in pairs(char:GetDescendants()) do
+                    if v:IsA('BasePart') and v.CanCollide then v.CanCollide = false end
+                end
+            end
+        end)
+    end
+end
+
+local function runAutoQuest()
+    task.spawn(function()
+        while MainState.autoQuest do
+            for i = 1, 3000 do
+                if not MainState.autoQuest then break end
+                pcall(function() 
+                    ReplicatedStorage.QuestRemotes.AddQuestProgress:FireServer() 
+                end)
+            end
+            task.wait(0.1) 
+        end
+    end)
+end
+
+local function runAutoSellOre()
+    task.spawn(function()
+        while MainState.autoSellOre do
+            local data = LocalPlayer:FindFirstChild("Data")
+            if data then
+                local ore = data:FindFirstChild("BlackOre")
+                if ore and ore.Value > 0 then
+                    pcall(function()
+                        ReplicatedStorage.Remotes.SellItem:FireServer("BlackOre", "Sell", true)
+                    end)
+                end
+            end
+            task.wait()
+        end
+    end)
+end
+
+local function collectDrop(model)
+    for _, v in pairs(model:GetDescendants()) do
+        if v:IsA("ProximityPrompt") then fireproximityprompt(v) end
+    end
+end
+
+local function runDropFarm()
+    task.spawn(function()
+        local TweenService = game:GetService("TweenService")
+        local RunService = game:GetService("RunService")
+        local Players = game:GetService("Players")
+
+        local bv = Instance.new("BodyVelocity")
+        bv.Name = "DropFarmAntiGravity"
+        bv.Velocity = Vector3.zero
+        bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+        bv.P = 10000
+
+        local function cleanVelocity()
+            if bv.Parent then bv.Parent = nil end
+        end
+
+        while FarmState.dropsActive do
+            local dropsFolder = Workspace:FindFirstChild("Drops")
+            local target = nil
+            local minDist = math.huge
+            local myChar = Players.LocalPlayer.Character
+            local myRoot = getRoot(myChar)
+
+            if not myRoot then
+                cleanVelocity()
+                task.wait(0.5)
+                continue
+            end
+
+            if dropsFolder then
+                for _, drop in pairs(dropsFolder:GetChildren()) do
+                    local actualItem = drop:FindFirstChild(drop.Name) or drop:FindFirstChild("CursedFinger") or drop:FindFirstChild("Drop") or drop
+                    local targetPos = nil
+
+                    if actualItem:IsA("Model") then
+                        targetPos = actualItem:GetPivot().Position
+                    elseif actualItem:IsA("BasePart") then
+                        targetPos = actualItem.Position
+                    end
+
+                    if targetPos then
+                        local dist = (targetPos - myRoot.Position).Magnitude
+                        if dist < minDist then
+                            minDist = dist
+                            target = {Object = drop, Position = targetPos}
+                        end
+                    end
+                end
+            end
+
+            if target then
+                if myRoot and not bv.Parent then bv.Parent = myRoot end
+                
+                local dropObj = target.Object
+
+                while FarmState.dropsActive and dropObj and dropObj.Parent do
+                    if not Players.LocalPlayer.Character then break end
+                    local currentRoot = Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                    if not currentRoot then break end
+                    
+                    if bv.Parent ~= currentRoot then bv.Parent = currentRoot end
+
+                    local actualItem = dropObj:FindFirstChild(dropObj.Name) or dropObj:FindFirstChild("CursedFinger") or dropObj:FindFirstChild("Drop") or dropObj
+                    local destPos = nil
+                    
+                    if actualItem:IsA("Model") then destPos = actualItem:GetPivot().Position
+                    elseif actualItem:IsA("BasePart") then destPos = actualItem.Position end
+                    
+                    if not destPos then break end 
+
+                    local dist = (destPos - currentRoot.Position).Magnitude
+                    local speed = FarmState.tweenSpeed or 300
+
+                    local time = math.max(dist / speed, 0.05)
+                    local tInfo = TweenInfo.new(time, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
+                    local tween = TweenService:Create(currentRoot, tInfo, {CFrame = CFrame.new(destPos)})
+                    tween:Play()
+
+                    if dist < 10 then
+                        collectDrop(dropObj)
+                        
+                        local touchPart = dropObj:FindFirstChild("Touched")
+                        if touchPart and touchPart:FindFirstChild("TouchInterest") then
+                           firetouchinterest(currentRoot, touchPart, 0)
+                           firetouchinterest(currentRoot, touchPart, 1)
+                        end
+                    end
+
+                    RunService.Heartbeat:Wait()
+                end
+            else
+                RunService.Heartbeat:Wait()
+            end
+        end
+
+        cleanVelocity()
+        bv:Destroy()
+    end)
+end
+
+local function runAutoBow()
+    task.spawn(function()
+        RunService.Heartbeat:Connect(function()
+            if not FarmState.bowActive then return end
+            
+            local char = LocalPlayer.Character
+            if char then
+                local bow = char:FindFirstChild("Bow")
+                if bow then
+                    local target = GetClosestMob(FarmState.bowRange)
+                    if target then
+                        local targetRoot = target:FindFirstChild("HumanoidRootPart")
+                        if targetRoot then
+                            local script = bow:FindFirstChild("SwordScript")
+                            if script then
+                                local shootRemote = script:FindFirstChild("Shoot")
+                                if shootRemote then
+                                    shootRemote:FireServer(targetRoot.Position)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+    end)
+end
+
+local function runAutoAmmo()
+    task.spawn(function()
+        while FarmState.autoAmmo do
+            local data = LocalPlayer:FindFirstChild("Data")
+            
+            if data then
+                local arrowName = FarmState.selectedArrow
+                local arrowData = data:FindFirstChild(arrowName)
+                
+                if not arrowData or arrowData.Value <= 0 then
+                    Rayfield:Notify({Title = "Auto Ammo", Content = "Tá sem estoque, irmão. Vou comprar 100 aqui. " .. arrowName, Duration = 2})
+                    
+                    pcall(function()
+                        ReplicatedStorage.Remotes.BuyItem:FireServer(arrowName, "Bows", 100)
+                        task.wait(0.5)
+                        ReplicatedStorage.Remotes.AddArrows:FireServer(arrowName)
+                    end)
+                    
+                    task.wait(1.5)
+                else
+                end
+            end
+            
+            task.wait(1)
+        end
+    end)
+end
+
+local function runAutoBazooka()
+    task.spawn(function()
+        RunService.Heartbeat:Connect(function()
+            if not FarmState.bazookaActive then return end
+
+            local char = LocalPlayer.Character
+            if char then
+                local bazooka = char:FindFirstChild("Bazooka")
+                if bazooka then
+                    local target = GetClosestMob(FarmState.bazookaRange)
+                    if target then
+                        local targetRoot = target:FindFirstChild("HumanoidRootPart")
+                        if targetRoot then
+                            local serverScript = bazooka:FindFirstChild("ServerScript")
+                            if serverScript then
+                                local throwRemote = serverScript:FindFirstChild("Throw")
+                                if throwRemote then
+                                    throwRemote:FireServer(targetRoot.Position)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+    end)
+end
+
+local function runAutoMarineGun()
+    task.spawn(function()
+        RunService.Heartbeat:Connect(function()
+            if not FarmState.marineGunActive then return end
+
+            local char = LocalPlayer.Character
+            if char then
+                local gun = char:FindFirstChild("MarineGun")
+                if gun then
+                    local target = GetClosestMob(FarmState.marineGunRange)
+                    if target then
+                        local targetRoot = target:FindFirstChild("HumanoidRootPart")
+                        if targetRoot then
+                            local serverScript = gun:FindFirstChild("ServerScript")
+                            if serverScript then
+                                local activateRemote = serverScript:FindFirstChild("Activate")
+                                if activateRemote then
+                                    activateRemote:FireServer(targetRoot.Position)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+    end)
+end
+
+local function performBuy()
+    local item = ShopState.buyItemName
+    local amount = ShopState.buyQuantity
+    local category = "Bows"
+    
+    if item and amount > 0 then
+        task.spawn(function()
+            pcall(function()
+               ReplicatedStorage.Remotes.BuyItem:FireServer(item, category, amount)
+            end)
+            if string.find(item, "Arrow") then
+                pcall(function() ReplicatedStorage.Remotes.AddArrows:FireServer(item) end)
+            end
+            Rayfield:Notify({Title = "Loja", Content = "Comprei o " .. amount .. "x " .. item, Duration = 2})
+        end)
+    end
+end
+
+local function performSell()
+    local dataFolder = LocalPlayer:FindFirstChild("Data")
+    if not dataFolder then return end
+    
+    if #ShopState.sellSelectedItems == 0 then return end
+
+    local desiredAmount = ShopState.sellQuantity or 1
+
+    for _, itemName in pairs(ShopState.sellSelectedItems) do
+        if itemName == "No Items Found" or itemName == "Waiting for Inventory..." then continue end
+
+        local dataValue = dataFolder:FindFirstChild(itemName)
+        
+        if dataValue and dataValue:IsA("IntValue") and dataValue.Value > 0 then
+            local currentStock = dataValue.Value
+            
+            if desiredAmount >= currentStock then
+                pcall(function()
+                    ReplicatedStorage.Remotes.SellItem:FireServer(itemName, "Sell", true)
+                end)
+                Rayfield:Notify({Title = "Venda Rápida", Content = "Vendido todo o estoque de " .. itemName, Duration = 2})
+            else
+                task.spawn(function()
+                    Rayfield:Notify({Title = "Venda Parcial", Content = "Vendendo " .. desiredAmount .. "x " .. itemName .. "...", Duration = 2})
+                    
+                    for i = 1, desiredAmount do
+                        pcall(function()
+                            ReplicatedStorage.Remotes.SellItem:FireServer(itemName, "Sell", false)
+                        end)
+                        
+                        if i % 50 == 0 then task.wait() end
+                    end
+                    
+                    Rayfield:Notify({Title = "Concluído", Content = "Venda parcial finalizada", Duration = 2})
+                end)
+            end
+        end
+    end
+end
+
+local function runAutoSellSelected()
+    task.spawn(function()
+        while ShopState.autoSellSelected do
+            performSell()
+            task.wait(0.3) 
+        end
+    end)
+end
+
+local MainTab = Window:CreateTab('Main', 4483362458)
+local FarmTab = Window:CreateTab('Combat/Farm', 4483362458)
+local BuyTab = Window:CreateTab('Buy', 4483362458)
+local SellTab = Window:CreateTab('Sell', 4483362458)
+local TradeTab = Window:CreateTab('Trade', 4483362458)
+
+MainTab:CreateSection('Money')
+
+MainTab:CreateToggle({
+    Name = 'Infinite BlackOre',
+    CurrentValue = false,
+    Callback = function(value)
+        MainState.autoQuest = value
+        if value then runAutoQuest() end
+    end,
+})
+
+MainTab:CreateToggle({
+    Name = 'Auto Sell BlackOre',
+    CurrentValue = false,
+    Callback = function(value)
+        MainState.autoSellOre = value
+        if value then runAutoSellOre() end
+    end,
+})
+
+MainTab:CreateInput({
+    Name = "Add ore(Quantidade)",
+    PlaceholderText = "Ex: 5000",
+    RemoveTextAfterFocusLost = false,
+    Callback = function(Text)
+        local amount = tonumber(Text)
+        if amount and amount > 0 then
+            task.spawn(function()
+                for i = 1, amount do ReplicatedStorage.QuestRemotes.AddQuestProgress:FireServer() end
+                Rayfield:Notify({Title = "Aqui ó", Content = "Toma " .. amount, Duration = 3})
+            end)
+        end
+    end,
+})
+
+local GlitchTab = Window:CreateTab('Money', 4483362458)
+
+GlitchTab:CreateSection('Prison Box Exploit')
+
+GlitchTab:CreateInput({
+    Name = "Quantidade",
+    PlaceholderText = "Digite a quantia",
+    RemoveTextAfterFocusLost = false,
+    Callback = function(Text)
+        local num = tonumber(Text)
+        if num then
+            GlitchState.Amount = num
+        end
+    end,
+})
+
+GlitchTab:CreateButton({
+    Name = "Insta Money",
+    Callback = function()
+        runMoneyGlitch()
+    end,
+})
+
+GlitchTab:CreateLabel("First world only!")
+
+MainTab:CreateSection('Auto Quest System')
+
+local QuestDropdown = MainTab:CreateDropdown({
+    Name = "Select Quests(MultiSelect)",
+    Options = GetQuestList(),
+    CurrentOption = {},
+    MultipleOptions = true,
+    Callback = function(options)
+        QuestState.selectedQuests = options
+    end,
+})
+
+MainTab:CreateButton({
+    Name = "Refresh Quest List",
+    Callback = function()
+        QuestDropdown:Refresh(GetQuestList())
+    end,
+})
+
+MainTab:CreateToggle({
+    Name = "Auto Pick & Claim Quest",
+    CurrentValue = false,
+    Callback = function(value)
+        QuestState.autoQuest = value
+        if value then
+            if #QuestState.selectedQuests == 0 then
+                Rayfield:Notify({Title = "Aviso", Content = "Selecione pelo menos uma quest", Duration = 3})
+            else
+                runAutoQuest()
+            end
+        end
+    end,
+})
+
+MainTab:CreateSection('Mining System')
+
+MainTab:CreateToggle({
+    Name = "Auto mine(Spam Pickaxe)",
+    CurrentValue = false,
+    Callback = function(value)
+        MainState.autoMine = value
+        if value then runAutoMine() end
+    end,
+})
+
+MainTab:CreateToggle({
+    Name = "Farm all ores",
+    CurrentValue = false,
+    Callback = function(value)
+        MainState.farmAllOres = value
+        if value then 
+            MainState.farmSelectedOre = false 
+            runOreFarm("all") 
+        end
+    end,
+})
+
+local OreDropdown = MainTab:CreateDropdown({
+    Name = "Select ore to farm (Multi)",
+    Options = GetUniqueOreNames(),
+    CurrentOption = {},
+    MultipleOptions = true,
+    Callback = function(options)
+        MainState.selectedOreNames = options
+    end,
+})
+
+MainTab:CreateButton({
+    Name = "Refresh ores",
+    Callback = function() OreDropdown:Refresh(GetUniqueOreNames()) end,
+})
+
+MainTab:CreateToggle({
+    Name = "Farm selected ore",
+    CurrentValue = false,
+    Callback = function(value)
+        MainState.farmSelectedOre = value
+        if value then 
+            MainState.farmAllOres = false 
+            runOreFarm("selected") 
+        end
+    end,
+})
+
+MainTab:CreateSection('Auto Equip Tool')
+
+local ToolDropdown = MainTab:CreateDropdown({
+    Name = "Selecionar Tool",
+    Options = GetBackpackTools(),
+    CurrentOption = {""},
+    MultipleOptions = false,
+    Callback = function(option)
+        EquipState.SelectedTool = option[1]
+    end,
+})
+
+MainTab:CreateButton({
+    Name = "Refresh Backpack",
+    Callback = function()
+        ToolDropdown:Refresh(GetBackpackTools())
+    end,
+})
+
+MainTab:CreateToggle({
+    Name = "Auto Equip (Anti-Unequip)",
+    CurrentValue = false,
+    Callback = function(value)
+        ToggleAutoEquip(value)
+        if value then
+            Rayfield:Notify({Title = "Auto Equip", Content = "Monitorando: " .. EquipState.SelectedTool, Duration = 2})
+        end
+    end,
+})
+
+MainTab:CreateToggle({
+    Name = "Auto Conqueror Haki (Fire -> Equip)",
+    CurrentValue = false,
+    Callback = function(Value)
+        getgenv().AutoHaki = Value
+        
+        if Value then
+            task.spawn(function()
+                while getgenv().AutoHaki do
+                    pcall(function()
+                        local player = game:GetService("Players").LocalPlayer
+                        local backpack = player:FindFirstChild("Backpack")
+                        local char = player.Character
+                        local hum = char and char:FindFirstChild("Humanoid")
+                        
+                        if backpack then
+                            local tool = backpack:FindFirstChild("ConquerorsArmament")
+                            
+                            if tool then
+                                local serverScript = tool:FindFirstChild("ServerScript")
+                                if serverScript then
+                                    local remote = serverScript:FindFirstChild("EnableA")
+                                    
+                                    if remote and remote:IsA("RemoteEvent") then
+                                        remote:FireServer()
+                                        
+                                        if hum and hum.Health > 0 then
+                                            hum:EquipTool(tool)
+                                        end
+                                        
+                                        task.wait(10)
+                                    end
+                                end
+                            end
+                        end
+                    end)
+                    task.wait(0.5)
+                end
+            end)
+        end
+    end,
+})
+
+MainTab:CreateSection('Player Mods')
+MainTab:CreateToggle({ Name = 'GodMode', CurrentValue = false, Callback = function(v) applyGodMode(v) end })
+MainTab:CreateToggle({ Name = 'Noclip', CurrentValue = false, Callback = function(v) applyNoclip(v) end })
+MainTab:CreateToggle({
+    Name = 'Anti kick',
+    CurrentValue = false,
+    Callback = function(value)
+        toggleProtection(value)
+    end,
+})
+MainTab:CreateToggle({
+    Name = "Disable 3D Rendering(FPS Boost)",
+    CurrentValue = false,
+    Callback = function(value)
+        RunService:Set3dRenderingEnabled(not value)
+    end,
+})
+MainTab:CreateButton({
+    Name = "Server hop(Low Players)",
+    Callback = function()
+        runServerHop()
+    end,
+})
+MainTab:CreateButton({
+    Name = "Rejoin server",
+    Callback = function()
+        runRejoin()
+    end,
+})
+
+FarmTab:CreateSection('Melee & Mobs')
+
+FarmTab:CreateToggle({
+    Name = "Kill aura(Universal)",
+    CurrentValue = false,
+    Callback = function(value)
+        FarmState.killAura = value
+        if value then runKillAura() end
+    end,
+})
+
+FarmTab:CreateSlider({
+    Name = "Kill aura range",
+    Range = {0, 50},
+    Increment = 2,
+    CurrentValue = 10,
+    Callback = function(v) FarmState.killAuraRange = v end,
+})
+
+local MobDropdown = FarmTab:CreateDropdown({
+    Name = "Select mob to farm (Multi)",
+    Options = GetUniqueMobNames(), 
+    CurrentOption = {}, 
+    MultipleOptions = true,
+    Callback = function(options)
+        FarmState.selectedMobNames = options
+    end,
+})
+
+FarmTab:CreateButton({
+    Name = "Refresh mob list",
+    Callback = function()
+        MobDropdown:Refresh(GetUniqueMobNames())
+    end,
+})
+
+FarmTab:CreateToggle({
+    Name = "Auto farm selected mob",
+    CurrentValue = false,
+    Callback = function(value)
+        FarmState.autoMobFarm = value
+        if value then 
+            if not FarmState.selectedMobNames or #FarmState.selectedMobNames == 0 then
+                Rayfield:Notify({Title = "Erro", Content = "Selecione pelo menos um mob na lista!", Duration = 2})
+                FarmState.autoMobFarm = false
+            else
+                runAutoMobFarm() 
+            end
+        end
+    end,
+})
+
+FarmTab:CreateSection('Auto Defense')
+
+FarmTab:CreateToggle({
+    Name = "Auto Counter",
+    CurrentValue = false,
+    Callback = function(value)
+        FarmState.autoCounter = value
+        runAutoCounter(value)
+    end,
+})
+
+FarmTab:CreateSection('Hitbox Settings')
+
+FarmTab:CreateToggle({
+    Name = "Hitbox Expander",
+    CurrentValue = false,
+    Callback = function(v)
+        FarmState.hitboxExpander = v
+        runHitboxExpander(v)
+    end,
+})
+
+FarmTab:CreateSlider({
+    Name = "Size",
+    Range = {0, 50},
+    Increment = 1,
+    CurrentValue = 20,
+    Callback = function(v)
+        FarmState.hitboxSize = v
+    end,
+})
+
+FarmTab:CreateSection('Farm Nearest')
+
+FarmTab:CreateToggle({
+    Name = "Auto Farm Nearest Mob",
+    CurrentValue = false,
+    Callback = function(value)
+        FarmState.farmNearest = value
+        if value then
+            FarmState.autoMobFarm = false 
+            runFarmNearest()
+        end
+    end,
+})
+
+FarmTab:CreateSlider({
+    Name = "Search Range",
+    Range = {50, 10000},
+    Increment = 50,
+    CurrentValue = 500,
+    Callback = function(v)
+        FarmState.farmNearestRange = v
+    end,
+})
+
+FarmTab:CreateSection('Farm Position Settings')
+
+FarmTab:CreateDropdown({
+    Name = "Angle",
+    Options = {"Above", "Behind", "Below"},
+    CurrentOption = {"Above"},
+    MultipleOptions = false,
+    Callback = function(option)
+        FarmState.farmAngle = option[1]
+    end,
+})
+
+FarmTab:CreateSlider({
+    Name = "Distance",
+    Range = {0, 50},
+    Increment = 1,
+    CurrentValue = 5,
+    Callback = function(v)
+        FarmState.farmDistance = v
+    end,
+})
+FarmTab:CreateSection('Drops System')
+
+FarmTab:CreateToggle({
+    Name = "Instant collect drops",
+    CurrentValue = false,
+    Callback = function(value)
+        runAutoCollectDrops(value)
+    end,
+})
+FarmTab:CreateToggle({
+    Name = "SpeedAFK",
+    CurrentValue = false,
+    Callback = function(value)
+        MainState.speedAFK = value
+        if value then
+            runSpeedAFK()
+        end
+    end,
+})
+
+FarmTab:CreateSection('Cooking System')
+
+local CookDropdown = FarmTab:CreateDropdown({
+    Name = "Select Ingredient",
+    Options = {"Abra a panela primeiro!"}, -- Inicial
+    CurrentOption = {""},
+    MultipleOptions = false,
+    Callback = function(option)
+        FarmState.selectedFood = option[1]
+    end,
+})
+
+FarmTab:CreateButton({
+    Name = "Refresh Ingredients List",
+    Callback = function()
+        -- Atualiza a lista lendo a GUI
+        CookDropdown:Refresh(GetCookingIngredients())
+    end,
+})
+
+FarmTab:CreateToggle({
+    Name = "Auto Cook (Instant/No Delay)",
+    CurrentValue = false,
+    Callback = function(value)
+        FarmState.autoCook = value
+        if value then
+            runAutoCook()
+        end
+    end,
+})
+
+FarmTab:CreateToggle({
+    Name = "Auto Fish (Leave 1)",
+    CurrentValue = false,
+    Callback = function(value)
+        FarmState.autoFish = value
+        if value then
+            runAutoFish()
+        end
+    end,
+})
+
+FarmTab:CreateSection('Drops System')
+FarmTab:CreateSlider({ Name = "Tween speed", Range = {50, 2500}, Increment = 5, CurrentValue = 500, Callback = function(v) FarmState.tweenSpeed = v end })
+FarmTab:CreateToggle({ Name = 'Auto farm drops', CurrentValue = false, Callback = function(v) FarmState.dropsActive = v if v then runDropFarm() end end })
+local PlantDropdown = FarmTab:CreateDropdown({
+    Name = "Select Plant Type",
+    Options = GetUniquePlantNames(), 
+    CurrentOption = {},
+    MultipleOptions = true,
+    Callback = function(options)
+        PlantState.selectedPlants = options
+    end,
+})
+
+FarmTab:CreateButton({
+    Name = "Refresh Plant List",
+    Callback = function()
+        PlantDropdown:Refresh(GetUniquePlantNames())
+    end,
+})
+FarmTab:CreateToggle({
+    Name = "Auto plant",
+    CurrentValue = false,
+    Callback = function(value)
+        PlantState.autoPlant = value
+        if value then
+            if PlantState.selectedPlant == "" or PlantState.selectedPlant == "No Plants Found" then
+                Rayfield:Notify({Title = "Erro", Content = "Selecione uma planta primeiro", Duration = 2})
+            else
+                runAutoPlant()
+            end
+        end
+    end,
+})
+
+FarmTab:CreateSection('Bow Settings')
+FarmTab:CreateSlider({ Name = "Bow range", Range = {100, 3000}, Increment = 50, CurrentValue = 1000, Callback = function(v) FarmState.bowRange = v end })
+FarmTab:CreateToggle({ 
+    Name = 'Auto bow', 
+    CurrentValue = false, 
+    Callback = function(value) 
+        FarmState.bowActive = value 
+        if value then runAutoBow() end 
+    end 
+})
+local arrowList = {
+    "BronzeArrows", "IronArrows", "SteelArrows", 
+    "BlackArrows", "AdamantArrows", "RuneArrows"
+}
+FarmTab:CreateDropdown({
+    Name = "Select arrow type",
+    Options = arrowList,
+    CurrentOption = {"BronzeArrows"},
+    MultipleOptions = false,
+    Callback = function(option)
+        FarmState.selectedArrow = option[1]
+    end,
+})
+FarmTab:CreateToggle({
+    Name = "Enable auto ammo",
+    CurrentValue = false,
+    Callback = function(value)
+        FarmState.autoAmmo = value
+        if value then
+            runAutoAmmo()
+        end
+    end,
+})
+
+FarmTab:CreateSection('Bazooka/Gun Settings')
+FarmTab:CreateSlider({ Name = "Bazooka range", Range = {100, 3000}, Increment = 50, CurrentValue = 1000, Callback = function(v) FarmState.bazookaRange = v end })
+FarmTab:CreateToggle({ 
+    Name = 'Auto bazooka', 
+    CurrentValue = false, 
+    Callback = function(value) 
+        FarmState.bazookaActive = value 
+        if value then runAutoBazooka() end 
+    end 
+})
+FarmTab:CreateSlider({ Name = "Range(gun)", Range = {100, 3000}, Increment = 50, CurrentValue = 1000, Callback = function(v) FarmState.marineGunRange = v end })
+FarmTab:CreateToggle({ 
+    Name = 'Auto gun', 
+    CurrentValue = false, 
+    Callback = function(value) 
+        FarmState.marineGunActive = value 
+        if value then runAutoMarineGun() end 
+    end 
+})
+
+FarmTab:CreateSection('LightBeam Settings')
+
+FarmTab:CreateSlider({ 
+    Name = "LightBeam Range", 
+    Range = {100, 3000}, 
+    Increment = 50, 
+    CurrentValue = 1000, 
+    Callback = function(v) 
+        FarmState.lightBeamRange = v 
+    end 
+})
+
+FarmTab:CreateToggle({ 
+    Name = 'Auto LightBeam (Charge)', 
+    CurrentValue = false, 
+    Callback = function(value) 
+        FarmState.lightBeamActive = value 
+        if value then 
+            runAutoLightBeam() 
+        end 
+    end 
+})
+
+BuyTab:CreateSection('Buy')
+
+local ItemDropdown = nil 
+
+local CategoryDropdown = BuyTab:CreateDropdown({
+    Name = "1. Select Category",
+    Options = GetShopCategories(),
+    CurrentOption = {""},
+    MultipleOptions = false,
+    Callback = function(option)
+        ShopState.selectedCategory = option[1]
+        ShopState.selectedItem = ""
+        
+        if ItemDropdown then
+            ItemDropdown:Refresh(GetShopItems(ShopState.selectedCategory))
+        end
+    end,
+})
+
+ItemDropdown = BuyTab:CreateDropdown({
+    Name = "2. Select Item",
+    Options = {"Select a Category first"},
+    CurrentOption = {""},
+    MultipleOptions = false,
+    Callback = function(option)
+        ShopState.selectedItem = option[1]
+    end,
+})
+
+BuyTab:CreateInput({
+    Name = "Quantity",
+    PlaceholderText = "Ex: 1, 10, 50",
+    RemoveTextAfterFocusLost = false,
+    Callback = function(text)
+        local num = tonumber(text)
+        if num then
+            ShopState.buyAmount = num
+        end
+    end,
+})
+
+BuyTab:CreateButton({
+    Name = "Buy Item",
+    Callback = function()
+        performDynamicBuy()
+    end,
+})
+
+BuyTab:CreateButton({
+    Name = "Refresh Categories",
+    Callback = function()
+        CategoryDropdown:Refresh(GetShopCategories())
+    end,
+})
+
+SellTab:CreateSection('Inventory Manager')
+
+SellDropdown = SellTab:CreateDropdown({
+    Name = "Select items to sell(Vários)",
+    Options = {"Esperando pelo inventário"},
+    CurrentOption = {},
+    MultipleOptions = true,
+    Callback = function(options) 
+        ShopState.sellSelectedItems = options 
+    end,
+})
+
+SellTab:CreateInput({
+    Name = "Filtro de pesquisa",
+    PlaceholderText = "Escreve o nome do item",
+    RemoveTextAfterFocusLost = false,
+    Callback = function(text)
+        ShopState.searchFilter = text
+        updateInventoryUI()
+    end,
+})
+
+SellTab:CreateInput({
+    Name = "Sell quantity",
+    PlaceholderText = "Ex: 100",
+    RemoveTextAfterFocusLost = false,
+    Callback = function(text)
+        ShopState.sellQuantity = tonumber(text) or 1
+    end,
+})
+
+
+SellTab:CreateButton({
+    Name = "Sell once",
+    Callback = function()
+        performSell()
+        Rayfield:Notify({Title = "Sell", Content = "Vendido já", Duration = 2})
+    end,
+})
+
+SellTab:CreateToggle({
+    Name = "Auto sell selected items",
+    CurrentValue = false,
+    Callback = function(value)
+        ShopState.autoSellSelected = value
+        if value then
+            runAutoSellSelected()
+            Rayfield:Notify({Title = "Auto sell", Content = "Venda automática ativada", Duration = 3})
+        end
+    end,
+})
+
+setupInventoryObserver()
+
+TradeTab:CreateSection('Force Trade')
+
+local playerDropdown1 = TradeTab:CreateDropdown({
+    Name = "Target player",
+    Options = GetPlayerNames(),
+    CurrentOption = {""},
+    Callback = function(option) TradeState.target1 = option[1] end,
+})
+
+TradeTab:CreateButton({
+    Name = "Refresh players",
+    Callback = function() playerDropdown1:Refresh(GetPlayerNames()) end,
+})
+
+TradeTab:CreateButton({
+    Name = "Force prade",
+    Callback = function()
+        if TradeState.target1 and Players:FindFirstChild(TradeState.target1) then
+            ReplicatedStorage.Remotes.AddTradeFrame:FireServer(Players[TradeState.target1], LocalPlayer)
+        else
+            Rayfield:Notify({Title = "Erro", Content = "Seleciona um alvo primeiro", Duration = 2})
+        end
+    end,
+})
+
+TradeTab:CreateButton({
+    Name = "Force trade(Random)",
+    Callback = function()
+        local playersList = Players:GetPlayers()
+        if #playersList < 2 then return end
+        local t1 = playersList[math.random(1, #playersList)]
+        local t2 = playersList[math.random(1, #playersList)]
+        if t1 == t2 then t2 = playersList[math.random(1, #playersList)] end
+        ReplicatedStorage.Remotes.AddTradeFrame:FireServer(t1, t2)
+    end,
+})
